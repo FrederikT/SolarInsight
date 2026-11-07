@@ -1,0 +1,10 @@
+services:
+  app:
+    environment:
+      Solar__SetupPasswordFile: /run/secrets/setup_password
+    secrets:
+      - setup_password
+secrets:
+  setup_password:
+    file: ${SOLAR_SETUP_SECRET:-./secrets/setup-password}
+

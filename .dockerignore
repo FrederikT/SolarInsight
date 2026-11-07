@@ -1,0 +1,13 @@
+.git
+.local
+.env
+secrets
+backups
+**/node_modules
+**/dist
+**/bin
+**/obj
+src/Api/wwwroot
+**/test-results
+**/playwright-report
+

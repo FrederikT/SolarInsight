@@ -1,0 +1,13 @@
+.local/
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+src/Api/wwwroot/
+.env
+secrets/
+backups/
+test-results/
+playwright-report/
+SolarInsight_Spezifikationen.md
+SolarInsight_Bugs_und_Features.md

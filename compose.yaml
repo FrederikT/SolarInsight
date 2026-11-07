@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_DB: solar
+      POSTGRES_USER: solar
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+    secrets:
+      - database_password
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U solar -d solar"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Solar: Host=db;Database=solar;Username=solar
+      Solar__DatabasePasswordFile: /run/secrets/database_password
+      Solar__Demo: ${SOLAR_DEMO:-false}
+      Solar__AllowHttp: ${SOLAR_ALLOW_HTTP:-false}
+      Solar__TrustedProxy: ${SOLAR_TRUSTED_PROXY:-}
+      Logging__LogLevel__Microsoft.AspNetCore.Hosting.Diagnostics: Warning
+      Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command: Warning
+    secrets:
+      - database_password
+    ports:
+      - "127.0.0.1:${SOLAR_PORT:-8080}:8080"
+    volumes:
+      - state:/state
+      - keys:/keys
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+secrets:
+  database_password:
+    file: ${SOLAR_DB_SECRET:-./secrets/database-password}
+volumes:
+  db:
+  state:
+  keys:
+

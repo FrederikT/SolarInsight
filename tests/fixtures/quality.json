@@ -1,0 +1,12 @@
+{
+  "synthetic": true,
+  "expectedStepMinutes": 5,
+  "expected": {"duplicateTimestamps":1,"missingIntervals":2,"counterResets":1},
+  "samples": [
+    {"utc":"2026-01-01T00:00:00Z","loadKw":4,"counterKwh":100},
+    {"utc":"2026-01-01T00:05:00Z","loadKw":4,"counterKwh":100.333333},
+    {"utc":"2026-01-01T00:05:00Z","loadKw":4,"counterKwh":100.333333},
+    {"utc":"2026-01-01T00:20:00Z","loadKw":null,"counterKwh":0.1}
+  ]
+}
+

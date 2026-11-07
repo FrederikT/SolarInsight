@@ -1,0 +1,12 @@
+services:
+  app:
+    environment:
+      Sungrow__AppFile: /run/secrets/sungrow_app
+      Sungrow__CallSpacingSeconds: ${SUNGROW_CALL_SPACING_SECONDS:-45}
+      Sungrow__RefreshMinutes: ${SUNGROW_REFRESH_MINUTES:-1440}
+    secrets:
+      - sungrow_app
+secrets:
+  sungrow_app:
+    file: ${SUNGROW_APP_SECRET:-./secrets/sungrow-app.json}
+

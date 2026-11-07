@@ -1,0 +1,85 @@
+name: Build and verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_USER: test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: solar_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d solar_test"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      SOLAR_TEST_DB: Host=127.0.0.1;Port=55432;Database=solar_test;Username=test
+      SOLAR_PRIVATE_URL: http://127.0.0.1:8081
+      SOLAR_E2E_URL: http://127.0.0.1:8080
+      SOLAR_TEST_PASSWORD_FILE: ${{ github.workspace }}/secrets/setup-password
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: src/Web/package-lock.json
+      - name: Backend and PostgreSQL tests
+        run: |
+          dotnet restore src/Api/Api.csproj --locked-mode
+          dotnet build src/Api/Api.csproj -c Release --no-restore
+          dotnet restore tests/Unit/Unit.csproj --locked-mode
+          dotnet test tests/Unit/Unit.csproj -c Release --no-restore
+          dotnet restore tests/Integration/Integration.csproj --locked-mode
+          dotnet test tests/Integration/Integration.csproj -c Release --no-restore
+      - name: Frontend checks
+        working-directory: src/Web
+        run: |
+          npm ci
+          npm run typecheck
+          npm run lint
+          npm run build
+          npx playwright install --with-deps chromium --only-shell
+      - name: Start clean demo and private Compose stacks
+        run: |
+          cp .env.example .env
+          mkdir -p secrets
+          openssl rand -hex 32 > secrets/database-password
+          openssl rand -hex 24 > secrets/setup-password
+          docker compose config --quiet
+          docker compose up -d --build
+          SOLAR_DEMO=false SOLAR_PORT=8081 docker compose -p solar-private -f compose.yaml -f compose.owner.yaml up -d --build
+          for port in 8080 8081; do
+            curl --fail --silent --retry 40 --retry-all-errors --retry-delay 2 "http://127.0.0.1:$port/health/ready"
+          done
+      - name: Browser and access-control tests
+        working-directory: src/Web
+        run: npm run test:e2e
+      - name: Restart persistence and restore into a clean database
+        run: |
+          docker compose restart app
+          curl --fail --silent --retry 40 --retry-all-errors --retry-delay 2 http://127.0.0.1:8080/health/ready
+          curl --fail --silent http://127.0.0.1:8080/api/v1/overview?kind=month | jq -e '.report.metrics.coverage > .999'
+          mkdir -p backups
+          docker compose -p solar-private exec -T db pg_dump -U solar -d solar -Fc > backups/ci.dump
+          docker compose -p solar-restore up -d --wait db
+          docker compose -p solar-restore exec -T db pg_restore --exit-on-error -U solar -d solar < backups/ci.dump
+          docker compose -p solar-restore exec -T db psql -U solar -d solar -At             -c 'SELECT "Name" FROM "Plants" WHERE "Active"' | grep -Fx Backupfixture
+          docker compose -p solar-restore exec -T db psql -U solar -d solar -At             -c 'SELECT count(*) FROM "Prices"' | grep -Fx 1
+      - name: Service logs on failure
+        if: failure()
+        run: |
+          docker compose logs --tail 100
+          SOLAR_DEMO=false SOLAR_PORT=8081 docker compose -p solar-private -f compose.yaml -f compose.owner.yaml logs --tail 100
+
