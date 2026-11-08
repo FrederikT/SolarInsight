@@ -1,12 +1,12 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, HeatmapChart, PieChart } from 'echarts/charts'
+import { BarChart, LineChart, HeatmapChart, PieChart, ScatterChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, VisualMapComponent, MarkAreaComponent, GraphicComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsCoreOption } from 'echarts/core'
 import type { Battery, Period } from './api'
 
-echarts.use([BarChart, LineChart, HeatmapChart, PieChart, GridComponent, TooltipComponent, LegendComponent,
+echarts.use([BarChart, LineChart, HeatmapChart, PieChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent,
   DataZoomComponent, VisualMapComponent, MarkAreaComponent, GraphicComponent, CanvasRenderer])
 export const colors = ['#b67715', '#165eaa', '#a8324e', '#008269', '#6d4dac', '#397577', '#5c7065']
 export const number = (value: number | null | undefined, digits = 2) =>

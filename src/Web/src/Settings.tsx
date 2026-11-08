@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { request, useData, type Battery, type Plant, type Rule, type Settings, type Tariff } from './api'
 import { BatteryFields, date, Numeric, number, Panel, Status } from './components'
 import { ProviderSetup } from './Provider'
+import { LiveSetup } from './LiveView'
 
 const ruleDefaults: Rule = { kw: .1, minutes: 15, socTolerance: .02, highLoadKw: null }
 const emptyBattery: Battery = { capacity: 0, chargeKw: 0, dischargeKw: 0, chargeEfficiency: 1, dischargeEfficiency: 1, minSoc: 0, maxSoc: 1 }
@@ -19,6 +20,7 @@ export function SettingsView({ demo, plant, logout, onChange }: { demo: boolean;
       {demo ? <p>Diese Instanz zeigt synthetische Demodaten. Anlagen- und Tarifparameter gelten für alle Besucher.</p> :
         <><p>Für Live-Daten sind eine freigegebene Entwickleranwendung, die Autorisierung durch den Anlageneigentümer und ein bestätigter Messpunktvertrag erforderlich.</p>
           <a href="https://academy.sungrow-emea.com/de/articles/331036-sungrow-s-api-developer-portal" rel="noreferrer">Sungrow-Anleitung zur Entwicklerfreigabe</a><ProviderSetup changed={changed} /></>}
+      {demo && <LiveSetup zone={plant.zone} demo />}
     </Panel>
     <Panel title="Anlage und Speicher">
       {plant.devices.length > 0 && <ul>{plant.devices.map((device, i) => <li key={i}>{device.type} · {device.model}</li>)}</ul>}

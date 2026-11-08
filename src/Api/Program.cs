@@ -36,6 +36,13 @@ builder.Services.AddSingleton(new SungrowDiscovery(new HttpClient(new SocketsHtt
 builder.Services.AddSingleton<LiveProvider>();
 builder.Services.AddDbContext<Store>(o => o.UseNpgsql(connection.ConnectionString));
 builder.Services.AddScoped<Queries>();
+builder.Services.AddSingleton<ImportCancellation>();
+builder.Services.AddSingleton<OverviewActivity>();
+builder.Services.AddSingleton<LiveMonitor>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<LiveMonitor>());
+builder.Services.AddSingleton<IHistorySource>(sp => sp.GetRequiredService<LiveProvider>());
+builder.Services.AddSingleton<HistoryWorker>();
+builder.Services.AddSingleton<LanAccess>();
 builder.Services.AddHostedService<ImportWorker>();
 builder.Services.AddSingleton<Jobs>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Jobs>());
@@ -87,6 +94,7 @@ builder.Services.AddRateLimiter(o =>
 });
 
 var app = builder.Build();
+var lan = app.Services.GetRequiredService<LanAccess>();
 app.Services.GetRequiredService<LocalAccess>().Initialize(config["Solar:SetupPasswordFile"]);
 using (var scope = app.Services.CreateScope())
     await Importer.Initialize(scope.ServiceProvider.GetRequiredService<Store>(), runtime.Demo, app.Lifetime.ApplicationStopping);
@@ -112,7 +120,13 @@ app.Use(async (ctx, next) =>
     }
     catch (ProviderFailure ex)
     {
-        await Results.Problem(statusCode: 502, detail: "Sungrow-Lesezugriff fehlgeschlagen: " + ex.Category).ExecuteAsync(ctx);
+        string status = ex.HttpStatus is { } http ? $" · HTTP {http}" : "";
+        string code = ex.ResultCode is { } result ? $" · Sungrow-Code {result}" : "";
+        if (ctx.Request.Path == "/api/v1/provider/authorize")
+            app.Logger.LogWarning("Sungrow-OAuth-Codeaustausch fehlgeschlagen. Kategorie {Category}, HTTP {HttpStatus}, Ergebniscode {ResultCode}, Antwortstruktur {ResponseShape}",
+                ex.Category, ex.HttpStatus, ex.ResultCode, ex.ResponseShape);
+        await Results.Problem(statusCode: 502,
+            detail: "Sungrow-Lesezugriff fehlgeschlagen: " + ex.Category + status + code).ExecuteAsync(ctx);
     }
     catch (TimeoutException)
     {
@@ -177,6 +191,15 @@ api.AddEndpointFilter(async (invocation, next) =>
 });
 Endpoints.Map(api);
 ProviderEndpoints.Map(api);
+LiveEndpoints.Map(api);
+app.MapGet("/api/v1/lan/now", async (HttpContext ctx, Queries queries, Store db, LiveMonitor monitor, CancellationToken ct) =>
+{
+    if (runtime.Demo || !lan.Enabled) return Results.NotFound();
+    if (!lan.Allows(ctx.Connection.RemoteIpAddress, ctx.Request.Headers.Authorization)) return Results.Unauthorized();
+    var plant = await queries.Plant(ct);
+    var state = await monitor.State(db, plant.Id, await LiveMonitor.Mapping(db, plant.Id, ct), ct);
+    return Results.Ok(state);
+}).RequireRateLimiting("api");
 app.Map("/api/{**path}", () => Results.NotFound());
 app.MapFallbackToFile("index.html");
 app.Run();

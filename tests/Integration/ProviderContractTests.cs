@@ -11,8 +11,39 @@ namespace SolarInsight.Tests;
 // Synthetic contract fixtures. These are independent expected examples, never recorded plant responses.
 public sealed class ProviderContractTests
 {
+    [Fact]
+    public void MinutesReportsUnusableSamplesWithoutInventingIntervals()
+    {
+        var mapping = new SungrowMapping(83067, null, null, null, null, true, true, true, false, true, false);
+        using var json = JsonDocument.Parse("""
+            {"fixture":[{"time_stamp":"20260101120000"},{"time_stamp":"20260101120500"}],
+             "point_dict":[{"point_id":"p83067","point_unit":"W"}]}
+            """);
+        var start = new DateTimeOffset(2026, 1, 1, 11, 0, 0, TimeSpan.Zero);
+        MinuteDiagnostics? report = null;
+        Assert.Empty(SungrowNormalization.Map(json.RootElement, "fixture", mapping, Zone, start,
+            start.AddHours(1), value => report = value));
+        Assert.Equal(new MinuteDiagnostics(JsonValueKind.Object, JsonValueKind.Array, JsonValueKind.Array, 2, 2, 1, 0),
+            report);
+    }
+
     static readonly TimeZoneInfo Zone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
     static readonly DateTimeOffset Start = Calendar.Utc(new DateOnly(2026, 1, 1), Zone);
+
+    [Fact]
+    public void MinutesDiagnoseMissingPlantSeriesWithoutUsingOtherRows()
+    {
+        using var json = JsonDocument.Parse("""
+            {"another-plant":[{"time_stamp":"20260101000000","p83067":"4000"}],
+             "other-wrapper":{},"point_dict":[{"point_id":"p83067","point_unit":"W"}]}
+            """);
+        var mapping = new SungrowMapping(83067, null, null, null, null, true, true, true, false, true, false);
+        MinuteDiagnostics? report = null;
+        Assert.Empty(SungrowNormalization.Map(json.RootElement, "fixture", mapping, Zone, Start,
+            Start.AddHours(1), value => report = value));
+        Assert.Equal(new MinuteDiagnostics(JsonValueKind.Object, JsonValueKind.Undefined, JsonValueKind.Array,
+            0, 0, 1, 0, OtherNonemptyArrays: 1, OtherObjects: 1), report);
+    }
 
     [Fact]
     public async Task OfficialTokenContractUsesEuPostAndReturnsNoFabricatedSuccess()
@@ -123,6 +154,57 @@ public sealed class ProviderContractTests
         Assert.Equal(12, rows[0].Kwh);
         Assert.Equal("provider", rows[0].Origin);
         Assert.Equal(24, (rows[0].End - rows[0].Start).TotalHours);
+    }
+
+    [Theory]
+    [InlineData(200, "2", "2")]
+    [InlineData(400, "5", "5")]
+    [InlineData(401, "E914", "E914")]
+    [InlineData(403, "123456", null)]
+    public async Task TokenFailureExposesOnlySafeDiagnostics(int http, string code, string? expected)
+    {
+        using var client = new HttpClient(new Stub(_ => Task.FromResult(new HttpResponseMessage((HttpStatusCode)http)
+        {
+            Content = new StringContent($"{{\"result_code\":\"{code}\",\"result_msg\":\"private-response\"}}")
+        })));
+        var sungrow = new SungrowDiscovery(client);
+        var error = await Assert.ThrowsAsync<ProviderFailure>(() =>
+            sungrow.Exchange("app", "key", "secret-code", new Uri("http://127.0.0.1:8081/"), default));
+        Assert.Equal(http, error.HttpStatus);
+        Assert.Equal(expected, error.ResultCode);
+        Assert.DoesNotContain("private-response", error.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompleteTokenPayloadWithoutResultCodeCanBeUsed(bool wrapped)
+    {
+        const string tokens = """
+            {"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":3600}
+            """;
+        using var client = new HttpClient(new Stub(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(wrapped ? "{\"result_data\":" + tokens + "}" : tokens)
+        })));
+        var result = await new SungrowDiscovery(client).Exchange("app", "key", "code", new Uri("http://127.0.0.1:8081/"), default);
+        Assert.Equal("fixture-access", result.GetProperty("access_token").GetString());
+    }
+
+    [Fact]
+    public async Task ExplicitFailureIsPreservedEvenWithTokenFields()
+    {
+        using var client = new HttpClient(new Stub(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+                {"result_code":"2","result_data":{"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":3600}}
+                """)
+        })));
+        var error = await Assert.ThrowsAsync<ProviderFailure>(() =>
+            new SungrowDiscovery(client).Exchange("app", "key", "code", new Uri("http://127.0.0.1:8081/"), default));
+        Assert.Equal("2", error.ResultCode);
+        Assert.Contains("access_token=True", error.ResponseShape);
+        Assert.DoesNotContain("fixture-access", error.ResponseShape);
     }
 
     sealed class Stub(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler) : HttpMessageHandler

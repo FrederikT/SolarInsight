@@ -1,6 +1,6 @@
 # Sungrow iSolarCloud Open API
 
-Abruf am 7. November 2026. Quellen sind öffentlich lesbare Herstellerseiten. Für dieses Projekt liegen keine freigegebene App und keine autorisierte Anlage vor. Die Live-Abnahme A25 bleibt offen.
+Abruf am 7. November 2026. Quellen sind öffentlich lesbare Herstellerseiten. Die Live-Abnahme A25 an einer autorisierten Anlage bleibt offen.
 
 | Bereich | Bestätigt | Konsequenz / offen |
 | --- | --- | --- |
@@ -22,4 +22,31 @@ Abruf am 7. November 2026. Quellen sind öffentlich lesbare Herstellerseiten. F�
 
 ## Live-Abnahme
 
+Für die Fehlersuche einen abgeschlossenen Kalendertag wählen, an dem im Anlagenportal PV-Erzeugung sichtbar ist. Der Minutenimport protokolliert Zeitraum, angefragte Messpunktnummern, Antworttypen und Anzahlen. Ein leeres Fenster erscheint als Warnung. Erfolgreiche Fenster erscheinen mit `Logging__LogLevel__SolarInsight.Api.LiveProvider=Information`. Tokens, Zugangsdaten und Rohmesswerte werden dabei nicht protokolliert.
+
+Ein Import ohne verwertbare Intervalle oder Tagesaggregate im geprüften Bereich erhält die Fehlerkategorie `no-data`. Bei längeren Aufträgen wird dafür nach den ersten 48 Stunden geprüft. Wenn der Zeitraum vor Inbetriebnahme oder mit einem längeren Ausfall beginnt, den Import mit einem belegten Zeitraum erneut starten. Einzelne Lücken nach einem verwertbaren Beginn können weiterhin auftreten und werden im Datenstatus ausgewiesen.
+
 Erforderlich sind eine freigegebene App für die EU-Region, die Anlageneinwilligung des Eigentümers und mindestens ein autorisierter historischer Tag mit bestätigtem Messort, Einheit, Vorzeichen und Zeitsemantik. Verglichen werden die Energiekanäle und die Tagesaggregate mit demselben Zeitraum im Anlagenportal. Danach tatsächliche App-Kontingente und verfügbare Rückschau dokumentieren. A25 bleibt bis dahin offen.
+
+
+### Aktuelle Gerätemessungen
+
+Abruf am 7. November 2026. Die öffentliche EU-Dokumentation beschreibt `POST /openapi/platform/getDeviceRealTimeData` mit `ps_key_list`, `point_id_list` und optionalem Messpunktverzeichnis. Die Geräteantwort weist `device_time` als Aktualisierungszeit aus. Für den Anlagen-Live-Endpunkt ist im Ausgabeschema kein entsprechender Zeitstempel ausgewiesen. Beide Seiten nennen etwa fünf Minuten Datenaktualisierung und empfehlen mindestens fünf Minuten zwischen Aufrufen. [Gerätevertrag](https://developer-api.isolarcloud.com/#/document/api?id=14058&project_id=1) · [Anlagenvertrag](https://developer-api.isolarcloud.com/#/document/api?id=14061&project_id=1)
+
+Solar Insight liest ein einzelnes Gerät mit bestätigter Kanalzuordnung. Leistung wird anhand des gelieferten Messpunktverzeichnisses aus W oder kW übernommen. Die Probe zeigt den Messzeitpunkt und jeden verfügbaren Kanal getrennt. Die Interpretation von `device_time` als lokale Anlagenzeit, gleichzeitige Kanalaktualisierung, die tatsächlichen Messorte, Vorzeichen, SOC-Skalierung und das gebuchte Kontingent sind an der Anlage zu bestätigen. Mehrdeutige Herbstzeitstempel und Zeitstempel in der Zukunft werden verworfen. Der Gerätevertrag belegt keine vollständigen Energieintervalle. Die Anwendung übernimmt die Werte als Stichproben. Für diese Umsetzung wurde keine autorisierte Probe an einer echten Anlage ausgeführt.
+
+Für die Abnahme unter Einstellungen → Live-Messpunkte ein Gerät und Kandidaten auswählen. Mehrere Proben im Abstand von mindestens fünf Minuten ziehen und jeweils Messzeit, Vorzeichen, Einheiten sowie PV, Haus, Netz, Batterie und optional SOC mit iSolarCloud abgleichen. Netzeinspeisung bei Batterieentladung separat prüfen. Nur bestätigte Kanäle speichern. Netzbezug und Einspeisung auch im Heimnetz-Endpunkt vergleichen.
+
+
+### Vorbelegte Messpunktkandidaten
+
+Stand 7. November 2026. Die Minutenhistorie schlägt PV `83067`, Last `83106`, Netz `83549`, Speicherwirkleistung `83238` und SOC `83129` vor. Für Tageswerte stehen PV `83022`, Last `83118`, Netzbezug `83102`, Einspeisung `83072` und für Anlagen mit EMS-Lade- und Entladewerten `83322` / `83323` zur Auswahl. Die historische Probe zeigt die Anzahl der gelieferten Werte pro Kandidat. [Anlagenmesspunkte](https://developer-api.isolarcloud.com/#/document/md?id=14097&project_id=1) · [Tageshistorie](https://developer-api.isolarcloud.com/#/document/api?id=14063&project_id=1)
+
+Beim Hybridwechselrichter werden für Live Last `13119`, Netzbezug/Einspeisung `13149` / `13121`, Batterieladung/-entladung `13126` / `13150` und SOC `13141` vorgeschlagen. Richtungswerte werden erst gebildet, wenn beide Punkte numerisch und in bestätigten Leistungseinheiten vorliegen. Eine gelieferte Null ist dabei gültig. `13003` bezeichnet DC-Gesamtleistung und wird nicht als PV-Leistung für die Flussbilanz vorbelegt. Die Vorschläge ersetzen keine gespeicherte Zuordnung und sind kein Nachweis für die Verfügbarkeit an der konkreten Anlage. [Hybridmesspunkte](https://developer-api.isolarcloud.com/#/document/md?id=14102&project_id=1) · [Live-Geräteabfrage](https://developer-api.isolarcloud.com/#/document/api?id=14058&project_id=1)
+
+
+### Autorisierte Stichprobe an der Anlage
+
+Am 7. November 2026 lieferte die historische Probe für den 6. November alle sechs normalisierten Tageskanäle (PV, Last, Bezug, Einspeisung, Ladung und Entladung). Das geprüfte 15-Minuten-Fenster lieferte je neun Werte für Anlagenwirkleistung `83033` und Last `83106`. Die übrigen angefragten Minutenpunkte lieferten in diesem Fenster keine Werte. Anlagenwirkleistung wird weiterhin nicht als PV-Erzeugung übernommen.
+
+Die erste Live-Abfrage meldete `009` für einen fehlenden Pflichtparameter. Nach Ergänzung von `device_type` aus dem Geräteschlüssel lieferte das Hybridgerät einen Zeitstempel und numerische Werte für Last, Netz, Batterie und SOC. Für den laufenden Live-Abruf sind Last, Netz und Batterie übernommen. Die vorliegenden SOC-Rohwerte sind mit beiden Skalen vereinbar. Die Skalierung und ein geeigneter Live-PV-Messpunkt bleiben offen. [Gerätevertrag](https://developer-api.isolarcloud.com/#/document/api?id=14058&project_id=1) · [Fehlercodes](https://developer-api.isolarcloud.com/#/document/md?id=14086&project_id=1)

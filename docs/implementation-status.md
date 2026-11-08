@@ -1,5 +1,15 @@
 # Umsetzungsstand
 
+## Anforderungen und offene Arbeit
+
+| Bereich | Anforderungen | Stand |
+| --- | --- | --- |
+| Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
+| Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
+| Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
+| Bedienung, Setup und automatische Importe | [Geplante Verbesserungen](backlog.md) | Offen. Die Anforderungen und Abnahmekriterien stehen im Backlog. |
+| Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | Entscheidung des Eigentümers offen. |
+
 ## Umsetzungsliste
 
 1. Datenvertrag, Versionen, Compose, Migration und Provider-Erkundung (F-01–04, D-01–02, A01–03, A25).
@@ -17,13 +27,13 @@
 - Speichererweiterung, Kapazitätskurve, Verschiebung, Zusatzbedarf, Kostenvergleich, begrenzte Rechenjobs und Exporte sind implementiert.
 - Der private Betriebsmodus besitzt lokalen Zugang, CSRF-Schutz, getrennte Schlüsselhaltung und den dokumentierten Sungrow-Leseadapter.
 - Die Provider-Freigabe, echte Messpunktprobe und kontobezogenen Grenzwerte bleiben vor Live-Abnahme offen.
-- Docker Compose wurde konfigurationsseitig geprüft. Auf dem Prüfhost war keine Docker-Engine verfügbar. Start, Migration, Browser und Restore wurden mit dem veröffentlichten Build und portablem PostgreSQL lokal ausgeführt. Die GitHub-CI enthält die ergänzende Prüfung mit Docker Compose.
+- Docker Compose wurde lokal mit frischen Demo- und privaten Testvolumes geprüft. Die Restore-Prüfung wurde separat mit portablem PostgreSQL ausgeführt.
 
 ## Abnahme je Kriterium
 
 | ID | Stand | Evidenz |
 | --- | --- | --- |
-| A01 | Teilgeprüft | Compose-Konfiguration validiert. Release-Publish startet gegen eine leere PostgreSQL-17-Datenbank und importiert 210.240 Demointervalle ohne Providerzugang. Containerstart ist in CI definiert und auf dem lokalen Host offen. |
+| A01 | Geprüft | Docker-Image neu gebaut. Frischer Compose-Start auf leeren Volumes mit erfolgreicher Migration und abgeschlossenem synthetischem Import. |
 | A02 | Geprüft | PostgreSQL-Test für Duplikate, unveränderte Summe, Korrektur, neue Revision und Löschung betroffener integrierter Aggregate. Ergebnisse tragen die Revision und ihr Abruf verwirft veraltete Revisionen. |
 | A03 | Geprüft | PostgreSQL-Checkpoint, Wiederaufnahme mit neuem Kontext, Rollback eines unterbrochenen Fensters, 429 mit Retry-After, 401 ohne Retry und Stopp nach drei Timeouts. |
 | A04 | Geprüft | 4 kW über 15 Minuten ergeben 1 kWh. Trapez, Lücken, Messpunkt-Einheiten und Reset separat geprüft. |
@@ -51,9 +61,8 @@
 
 ## Fortsetzung
 
-1. Auf einem Rechner mit Docker-Engine die CI-Compose-Schritte ausführen und A01 vervollständigen.
-2. Nach Sungrow-App-Freigabe mit einer autorisierten Anlage die in der Provider-Dokumentation beschriebene A25-Abnahme durchführen. Messorte, Vorzeichen, SOC-Semantik, Paketgrenzen und die reale Datenrückschau mit Belegen ergänzen.
-3. Repository-Lizenz durch den Eigentümer festlegen.
+1. Nach Sungrow-App-Freigabe mit einer autorisierten Anlage die in der Provider-Dokumentation beschriebene A25-Abnahme durchführen. Messorte, Vorzeichen, SOC-Semantik, Paketgrenzen und die reale Datenrückschau mit Belegen ergänzen.
+2. Repository-Lizenz durch den Eigentümer festlegen.
 
 Die manuelle OAuth-Codeübergabe, bekannte Modellgrenzen und Schlüsselhaltung sind in der Architektur und Betriebsdokumentation beschrieben. Messungen und Befehle stehen in verification.md.
 
@@ -65,5 +74,28 @@ Die manuelle OAuth-Codeübergabe, bekannte Modellgrenzen und Schlüsselhaltung s
 - Die Dauer je Nacht zählt erfasste Zeit an der unteren Ladegrenze ab 22:00 Uhr bis zum ersten nachweisbaren PV-Intervall am selben oder folgenden Kalendertag. Eine Lücke, fehlender SOC oder das Ende der verfügbaren Auswahl kann den Nachweis begrenzen. Die Anzeige kennzeichnet dies.
 - Sungrow-Live-Abnahme bleibt offen. Die neuen Ansichten verwenden vorhandene Demodaten und unabhängige deterministische Fixtures. Es wurden keine unbestätigten Sungrow-Messpunktzuordnungen ergänzt.
 
-- Bei einem Konfigurationswechsel im ausgewählten Zeitraum bleiben Ladegrenzenaussagen offen. Die einzelnen Konfigurationszeiträume lassen sich separat auswerten. Gemessener Netzbezug und gemeldeter SOC bleiben sichtbar.
+- Ladegrenzenaussagen und nutzbarer SOC verwenden je Intervall die damals gültige Speicherkonfiguration. Fehlt eine eindeutige Zuordnung, bleibt der jeweilige Speicherzustand unbekannt. Gemessener Netzbezug und gemeldeter SOC bleiben sichtbar.
 - Lokal ausgeführt und bestanden sind der .NET-Release-Build, ESLint, TypeScript/Vite, 24 Unit-Tests, 13 PostgreSQL-Integrationstests und vier Playwright-Tests. Der neue Browserfall prüft unter anderem den unvollständigen Herbst, die direkte Kalenderwahl, KW 53 am Jahreswechsel sowie den Uhrzeit-Drilldown mit Rücksprung.
+
+
+## Sungrow-Import und Live-Übersicht
+
+| Abnahme | Stand |
+| --- | --- |
+| Fortschritt, Restzeit und Vorschau | Prozent aus dem Checkpoint. Fenster, leere Antworten und tatsächlich geschriebene Werte getrennt. Prognose aus der beobachteten Laufzeit. Browser- und Integrationsfixtures bestanden. |
+| Gezielter Abbruch | Ausstehende und laufende Aufträge enden dauerhaft als abgebrochen. Fertige Fenster bleiben bestehen. Ein weiterer Zeitraum kann sofort eingeplant werden. PostgreSQL-Rennfall und Browserbedienung geprüft. |
+| Cache, Neustart und Lücken | Sichtbarkeitsfrist pro Tab, ein geteilter Cache, Quellabstand und Wiederholungen beachtet. Deduplizierung, fehlende Kanäle und Ausfall über lokale Mitternacht geprüft. |
+| Historienabstimmung | Begrenzte tägliche Scans, beständige Warteschlange und erneute Prüfung vor jedem Abruf. Nach drei unvollständigen Versuchen bleibt die Lücke offen. PostgreSQL-Restart und leere Antworten geprüft. |
+| Jetzt, Heute und Heimnetz | Flussrichtung, Gleichzeitigkeit, Bilanz, DST, kanalweiser Vorrang der Historie und Aufbewahrung der Live-Stichproben geprüft. HTTP-Abruf ohne und mit getrenntem Leseschlüssel geprüft. |
+| Autorisierte Sungrow-Anlage | Offen. Messpunkte, Vorzeichen, Zeitstempel, Gleichzeitigkeit, tatsächliche Aktualisierung und gebuchtes Kontingent mit iSolarCloud abgleichen. Die öffentliche Herstellerempfehlung begrenzt den Cloud-Takt auf frühestens fünf Minuten. |
+
+Der Release-Build, die EF-Modellprüfung, ESLint, TypeScript/Vite, 24 Unit-Tests, 33 PostgreSQL-Integrations- und Vertragstests sowie sechs Playwright-Tests sind lokal durchgelaufen. Die Compose-Konfiguration einschließlich der Sungrow- und Heimnetz-Overlays wurde geprüft. Die Anwendung lief für die Browser- und HTTP-Tests als lokaler Release-Build mit PostgreSQL. Der Heimnetz-Smoke-Test bestätigte 401 bei fehlendem oder falschem Schlüssel, 200 beim lesenden Zugriff mit Schlüssel, 401 für den Zugriff auf Eigentümerrouten mit Leseschlüssel und 404 für den deaktivierten Demo-Endpunkt.
+
+
+## Erneute Abnahme und lokale Bereitstellung
+
+Docker Compose hat das aktuelle Image gebaut und die bestehende Demo auf Port 8080 aktualisiert. Die private Instanz auf Port 8081 erhielt denselben Quellstand als .NET Release-Publish. Vor ihrer ersten Migration wurde ein lokaler Datenbankdump erstellt. Beide Instanzen meldeten HTTP 200 auf `/health/ready`.
+
+Zusätzlich starteten getrennte Compose-Projekte mit frischen Volumes für Demo und privaten Testbetrieb. Die Demo schloss den synthetischen Import ab. Bestanden sind 25 Unit-Tests, sechs Playwright-Tests gegen diese Compose-Projekte, ESLint, TypeScript und der Release-Build. Der neue Speichertest prüft, dass dieselbe SOC-Messung vor und nach einem Wechsel der Ladegrenze unterschiedlich eingeordnet wird.
+
+Die erneute Sungrow-Live-Abnahme bleibt offen. Die automatische Freigabeprüfung hat die lesende Abfrage privater Anlagendaten bis zu einer ausdrücklichen Betreiberfreigabe abgelehnt.

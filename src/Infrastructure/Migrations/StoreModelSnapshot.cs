@@ -99,14 +99,72 @@ namespace Infrastructure.Migrations
                     b.ToTable("Devices");
                 });
 
+            modelBuilder.Entity("SolarInsight.Infrastructure.HistoryGap", b =>
+                {
+                    b.Property<Guid>("PlantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("Start")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("Due")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("End")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Open")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("PlantId", "Start", "Kind");
+
+                    b.HasIndex("PlantId", "Open", "Due");
+
+                    b.ToTable("HistoryGaps");
+                });
+
+            modelBuilder.Entity("SolarInsight.Infrastructure.HistoryScan", b =>
+                {
+                    b.Property<Guid>("PlantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("Due")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("NextDay")
+                        .HasColumnType("date");
+
+                    b.HasKey("PlantId");
+
+                    b.ToTable("HistoryScans");
+                });
+
             modelBuilder.Entity("SolarInsight.Infrastructure.ImportJob", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<long>("AggregateRows")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("Cancelled")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset>("Checkpoint")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("EmptyWindows")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("End")
                         .HasColumnType("timestamp with time zone");
@@ -123,18 +181,106 @@ namespace Infrastructure.Migrations
                     b.Property<Guid>("PlantId")
                         .HasColumnType("uuid");
 
+                    b.Property<long>("ReadingRows")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTimeOffset>("Start")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("Started")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("Windows")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("PlantId");
 
                     b.ToTable("Imports");
+                });
+
+            modelBuilder.Entity("SolarInsight.Infrastructure.LiveGap", b =>
+                {
+                    b.Property<Guid>("PlantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Channel")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("Start")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("End")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("PlantId", "Channel", "Start");
+
+                    b.ToTable("LiveGaps");
+                });
+
+            modelBuilder.Entity("SolarInsight.Infrastructure.LiveMeasurement", b =>
+                {
+                    b.Property<Guid>("PlantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("MeasuredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Channel")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Source")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("FetchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Quality")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("Value")
+                        .HasColumnType("numeric");
+
+                    b.HasKey("PlantId", "MeasuredAt", "Channel", "Source");
+
+                    b.ToTable("LiveMeasurements");
+                });
+
+            modelBuilder.Entity("SolarInsight.Infrastructure.LivePoll", b =>
+                {
+                    b.Property<Guid>("PlantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("FetchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Channels")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("MeasuredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Quality")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("RetryAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("PlantId", "FetchedAt");
+
+                    b.ToTable("LivePolls");
                 });
 
             modelBuilder.Entity("SolarInsight.Infrastructure.Plant", b =>
@@ -305,7 +451,52 @@ namespace Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("SolarInsight.Infrastructure.HistoryGap", b =>
+                {
+                    b.HasOne("SolarInsight.Infrastructure.Plant", null)
+                        .WithMany()
+                        .HasForeignKey("PlantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("SolarInsight.Infrastructure.HistoryScan", b =>
+                {
+                    b.HasOne("SolarInsight.Infrastructure.Plant", null)
+                        .WithMany()
+                        .HasForeignKey("PlantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("SolarInsight.Infrastructure.ImportJob", b =>
+                {
+                    b.HasOne("SolarInsight.Infrastructure.Plant", null)
+                        .WithMany()
+                        .HasForeignKey("PlantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("SolarInsight.Infrastructure.LiveGap", b =>
+                {
+                    b.HasOne("SolarInsight.Infrastructure.Plant", null)
+                        .WithMany()
+                        .HasForeignKey("PlantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("SolarInsight.Infrastructure.LiveMeasurement", b =>
+                {
+                    b.HasOne("SolarInsight.Infrastructure.Plant", null)
+                        .WithMany()
+                        .HasForeignKey("PlantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("SolarInsight.Infrastructure.LivePoll", b =>
                 {
                     b.HasOne("SolarInsight.Infrastructure.Plant", null)
                         .WithMany()

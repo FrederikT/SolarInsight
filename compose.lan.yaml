@@ -1,0 +1,11 @@
+services:
+  app:
+    environment:
+      Lan__Enabled: ${SOLAR_LAN_ENABLED:-false}
+      Lan__Network: ${SOLAR_LAN_NETWORK:-}
+      Lan__ReadKeyFile: /run/secrets/lan_read_key
+    secrets:
+      - lan_read_key
+secrets:
+  lan_read_key:
+    file: ${SOLAR_LAN_KEY_SECRET:-./secrets/lan-read-key}

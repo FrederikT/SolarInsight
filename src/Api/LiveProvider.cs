@@ -12,16 +12,22 @@ public record AuthorizedPlant(string Id, string Name);
 public record LiveActivation(string Plant, string Zone, SungrowMapping Mapping, string? Name = null);
 
 public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionProvider protection,
-    SungrowDiscovery sungrow, IConfiguration configuration, RuntimeOptions runtime) : IReadProvider, IAggregateProvider
+    SungrowDiscovery sungrow, IConfiguration configuration, RuntimeOptions runtime, ILogger<LiveProvider> logger)
+    : IHistorySource
 {
     readonly IDataProtector protector = protection.CreateProtector("sungrow-tokens-v1");
     readonly SemaphoreSlim authLock = new(1, 1);
     readonly SemaphoreSlim apiLock = new(1, 1);
     DateTimeOffset nextCall;
+    int liveWaiting;
+    readonly SemaphoreSlim liveLock = new(1, 1);
+    DateTimeOffset nextLiveCall;
+    (Guid Plant, LiveMapping Mapping, LiveBatch Batch)? lastLive;
+    public int LiveMinCloudSeconds => Math.Clamp(configuration.GetValue("Sungrow:LiveMinCloudSeconds", 300), 300, 86400);
     public TimeSpan Window => TimeSpan.FromMinutes(165);
     public bool Configured => !runtime.Demo && configuration["Sungrow:AppFile"] is { } file && File.Exists(file);
 
-    public int CallSpacingSeconds => Math.Clamp(configuration.GetValue("Sungrow:CallSpacingSeconds", 45), 1, 86400);
+    public int CallSpacingSeconds => Math.Clamp(configuration.GetValue("Sungrow:CallSpacingSeconds", 15), 1, 86400);
     public int RefreshMinutes => Math.Clamp(configuration.GetValue("Sungrow:RefreshMinutes", 1440), 60, 10080);
 
     AppKeys Keys()
@@ -32,7 +38,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             var keys = JsonSerializer.Deserialize<AppKeys>(File.ReadAllText(configuration["Sungrow:AppFile"]!),
                 new JsonSerializerOptions(JsonSerializerDefaults.Web));
             if (keys is null || string.IsNullOrWhiteSpace(keys.AppKey) || string.IsNullOrWhiteSpace(keys.AccessKey) ||
-                !Uri.TryCreate(keys.Redirect, UriKind.Absolute, out var uri) || uri.Scheme != "https")
+                !Uri.TryCreate(keys.Redirect, UriKind.Absolute, out var uri) || !SungrowDiscovery.IsAllowedRedirect(uri))
                 throw new ArgumentException("Ungültige serverseitige Sungrow-App-Konfiguration.");
             return keys;
         }
@@ -42,17 +48,29 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         }
     }
 
-    async Task<JsonElement> Send(Func<CancellationToken, Task<JsonElement>> call, CancellationToken ct)
+    async Task<JsonElement> Send(Func<CancellationToken, Task<JsonElement>> call, CancellationToken ct, bool priority = false)
     {
-        await apiLock.WaitAsync(ct);
+        while (true)
+        {
+            await apiLock.WaitAsync(ct);
+            var wait = nextCall - DateTimeOffset.UtcNow;
+            if (wait <= TimeSpan.Zero && (priority || Volatile.Read(ref liveWaiting) == 0)) break;
+            apiLock.Release();
+            if (wait > TimeSpan.FromMinutes(2)) throw new ProviderFailure("rate-limit", true, wait);
+            await Task.Delay(wait > TimeSpan.Zero ? wait : TimeSpan.FromMilliseconds(100), ct);
+        }
         try
         {
-            var wait = nextCall - DateTimeOffset.UtcNow;
-            if (wait > TimeSpan.Zero) await Task.Delay(wait, ct);
             nextCall = DateTimeOffset.UtcNow.AddSeconds(CallSpacingSeconds);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(25));
             try { return await call(timeout.Token); }
+            catch (ProviderFailure failure) when (failure.Category == "rate-limit" && failure.RetryAfter is { } retry)
+            {
+                var resume = DateTimeOffset.UtcNow + retry;
+                if (resume > nextCall) nextCall = resume;
+                throw;
+            }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new TimeoutException(); }
         }
         finally { apiLock.Release(); }
@@ -93,7 +111,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         await db.SaveChangesAsync(ct);
     }
 
-    async Task<(AppKeys Keys, string Token)> Access(CancellationToken ct)
+    async Task<(AppKeys Keys, string Token)> Access(CancellationToken ct, bool priority = false)
     {
         var keys = Keys();
         await authLock.WaitAsync(ct);
@@ -115,7 +133,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             }
             if (tokens.Expires <= DateTimeOffset.UtcNow.AddMinutes(1))
             {
-                var raw = await Send(c => sungrow.Refresh(keys.AppKey, keys.AccessKey, tokens.Refresh, c), ct);
+                var raw = await Send(c => sungrow.Refresh(keys.AppKey, keys.AccessKey, tokens.Refresh, c), ct, priority);
                 tokens = ParseTokens(raw);
                 await SaveTokens(db, tokens, ct);
             }
@@ -165,18 +183,30 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             }
             if (rows.Length < 10) break;
         }
+        if (input.Mapping.Live is { } live && !devices.ContainsKey(live.DeviceKey))
+            throw new ArgumentException("Das Live-Gerät gehört nicht zur ausgewählten Anlage.");
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Store>();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(702928349)", ct);
         var plant = await db.Plants.SingleOrDefaultAsync(p => p.ProviderId == input.Plant, ct);
-        var settings = JsonSerializer.Serialize(input.Mapping);
+        var mapping = input.Mapping;
         if (plant is not null)
         {
             var previous = await db.Connections.FindAsync([plant.Id], ct);
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT pg_advisory_xact_lock(hashtextextended({plant.Id.ToString()}, 0))""", ct);
+            if (await db.Imports.AnyAsync(j => j.PlantId == plant.Id &&
+                (j.Status == "pending" || j.Status == "running"), ct))
+                throw new ArgumentException("Die Zuordnung kann nach Ende des laufenden Imports geändert werden.");
             bool data = await db.Readings.AnyAsync(r => r.PlantId == plant.Id, ct) ||
                 await db.Aggregates.AnyAsync(a => a.PlantId == plant.Id, ct);
-            if (data && (previous?.Capabilities != settings || plant.Zone != input.Zone))
+            var old = previous is null ? null : JsonSerializer.Deserialize<SungrowMapping>(previous.Capabilities);
+            mapping = mapping with { Live = old?.Live };
+            var added = mapping.Daily;
+            bool additive = old is not null && (old with { Daily = added }) == mapping &&
+                (old.Daily?.Fields.All(field => added?.Fields.Contains(field) == true) ?? true);
+            if (data && (!additive || plant.Zone != input.Zone))
                 throw new ArgumentException("Eine Änderung der Messpunktzuordnung oder Zeitzone erfordert eine separate Datenmigration.");
         }
         await db.Plants.Where(p => p.Active).ExecuteUpdateAsync(s => s.SetProperty(p => p.Active, false), ct);
@@ -195,7 +225,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             plant.Revision++;
         }
         var connection = await db.Connections.FindAsync([plant.Id], ct);
-        var metadata = new ProviderConnection(plant.Id, "mapped", "", settings);
+        var metadata = new ProviderConnection(plant.Id, "mapped", "", JsonSerializer.Serialize(mapping));
         if (connection is null) db.Connections.Add(metadata);
         else db.Entry(connection).CurrentValues.SetValues(metadata);
         foreach (var (id, info) in devices)
@@ -207,6 +237,40 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         }
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+    }
+
+    public async Task<LiveBatch> ReadNow(Plant plant, LiveMapping mapping, CancellationToken ct)
+    {
+        await liveLock.WaitAsync(ct);
+        try
+        {
+            var identity = mapping with { Confirmed = false, BatteryExportExcluded = false };
+            var now = DateTimeOffset.UtcNow;
+            if (now < nextLiveCall)
+            {
+                if (lastLive is { } previous && previous.Plant == plant.Id && previous.Mapping == identity)
+                    return previous.Batch;
+                throw new ProviderFailure("rate-limit", true, nextLiveCall - now);
+            }
+            lastLive = null;
+            // Take the token lock before claiming priority so a concurrent token refresh can finish.
+            var (keys, token) = await Access(ct, priority: true);
+            Interlocked.Increment(ref liveWaiting);
+            try
+            {
+                var raw = await Send(c =>
+                {
+                    nextLiveCall = DateTimeOffset.UtcNow.AddSeconds(LiveMinCloudSeconds);
+                    return sungrow.DeviceNow(keys.AppKey, keys.AccessKey, token, mapping, c);
+                }, ct, priority: true);
+                var batch = LiveNormalization.Map(raw, plant.ProviderId!, mapping,
+                    TimeZoneInfo.FindSystemTimeZoneById(plant.Zone), DateTimeOffset.UtcNow);
+                lastLive = (plant.Id, identity, batch);
+                return batch;
+            }
+            finally { Interlocked.Decrement(ref liveWaiting); }
+        }
+        finally { liveLock.Release(); }
     }
 
     public async Task<Interval[]> Read(Guid plantId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
@@ -244,19 +308,86 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             }
             return collected.ToArray();
         }
-        var raw = await Send(c => sungrow.Minutes(keys.AppKey, keys.AccessKey, token, plant.ProviderId!, mapping.Points,
-            start, queryEnd, zone, c, step), ct);
-        return SungrowNormalization.Map(raw, plant.ProviderId!, mapping, zone, start, end);
+        try
+        {
+            var raw = await Send(c => sungrow.Minutes(keys.AppKey, keys.AccessKey, token, plant.ProviderId!, mapping.Points,
+                start, queryEnd, zone, c, step), ct);
+            return SungrowNormalization.Map(raw, plant.ProviderId!, mapping, zone, start, end, summary =>
+                logger.Log(summary.Intervals == 0 ? LogLevel.Warning : LogLevel.Information,
+                    "Sungrow-Minutenimport {Start:O} bis {End:O}, Punkte {Points}, Schritt {Step}: " +
+                    "Antwort {Payload}, Anlagenreihe {Series}, Wörterbuch {Dictionary}, Rohzeilen {RawRows}, " +
+                    "gültige Zeitstempel {Timestamps}, Leistungspunkte mit W/kW {Units}, verwertbare Intervalle {Intervals}, " +
+                    "weitere nichtleere Arrays {OtherArrays}, weitere Objekte {OtherObjects}",
+                    localStart, localEnd, string.Join(",", mapping.Points), step, summary.Payload, summary.PlantSeries,
+                    summary.PointDictionary, summary.RawSamples, summary.ValidTimestamps, summary.PowerPointsWithKnownUnit,
+                    summary.Intervals, summary.OtherNonemptyArrays, summary.OtherObjects));
+        }
+        catch (ProviderFailure failure)
+        {
+            logger.LogWarning("Sungrow-Minutenimport {Start:O} bis {End:O}: {Category}, HTTP {HttpStatus}, Sungrow-Code {ResultCode}",
+                localStart, localEnd, failure.Category, failure.HttpStatus, failure.ResultCode);
+            throw;
+        }
+    }
+
+    public async Task<object> Probe(Plant plant, DateOnly day, CancellationToken ct)
+    {
+        if (plant.ProviderId is not { } id) throw new ArgumentException("Keine Sungrow-Anlage ausgewählt.");
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
+        if (day >= Calendar.Day(DateTimeOffset.UtcNow, zone))
+            throw new ArgumentException("Einen abgeschlossenen Tag auswählen.");
+        var start = Calendar.Utc(day, zone).AddHours(11);
+        var (keys, token) = await Access(ct);
+        int[] minutePoints = [83067, 83033, 83052, 83106, 83549, 83238, 83129];
+        int[] dayPoints = [83022, 83118, 83072, 83102, 83322, 83323];
+        var minute = await Send(c => sungrow.Minutes(keys.AppKey, keys.AccessKey, token, id,
+            minutePoints, start, start.AddHours(2), zone, c, 15), ct);
+        var daily = await Send(c => sungrow.Days(keys.AppKey, keys.AccessKey, token, id, dayPoints, day, day, c), ct);
+        JsonElement Series(JsonElement data) =>
+            data.ValueKind == JsonValueKind.Object && data.TryGetProperty(id, out var series) ? series : default;
+        static bool HasNumber(JsonElement value) => decimal.TryParse(value.ToString(),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _);
+        var minuteSeries = Series(minute);
+        var daySeries = Series(daily);
+        return new
+        {
+            minutes = minutePoints.Select(point => new { point, samples = minuteSeries.ValueKind == JsonValueKind.Array
+                ? minuteSeries.EnumerateArray().Count(row => row.ValueKind == JsonValueKind.Object &&
+                    row.TryGetProperty($"p{point}", out var value) && HasNumber(value)) : 0 }).ToArray(),
+            normalizedDays = new AggregateMapping(83022, 83118, 83102, 83072, 83322, 83323)
+                .Normalize(daily, plant.Id, id, zone, day, day).Select(row => new { row.Point, row.Kwh }).ToArray(),
+            dayTimestamps = daySeries.ValueKind == JsonValueKind.Object
+                ? daySeries.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.Array)
+                    .SelectMany(p => p.Value.EnumerateArray()).Where(row => row.ValueKind == JsonValueKind.Object)
+                    .Select(row => row.TryGetProperty("time_stamp", out var at) ? at.ToString() : "")
+                    .Distinct().Take(5).ToArray() : [],
+            days = dayPoints.Select(point => new { point, samples = daySeries.ValueKind == JsonValueKind.Object &&
+                daySeries.TryGetProperty($"p{point}", out var values) && values.ValueKind == JsonValueKind.Array
+                ? values.EnumerateArray().Count(row => row.ValueKind == JsonValueKind.Object &&
+                    row.TryGetProperty("2", out var value) && HasNumber(value)) : 0 }).ToArray()
+        };
     }
 
     public async Task<Aggregate[]> ReadAggregates(Guid plantId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
+        => await ReadAggregates(plantId, start, end, start, end, ct);
+
+    public async Task<Aggregate[]> ReadAggregates(Guid plantId, DateTimeOffset jobStart, DateTimeOffset jobEnd,
+        DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Store>();
         var plant = await db.Plants.AsNoTracking().SingleAsync(p => p.Id == plantId, ct);
         var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
-        var first = Calendar.Day(start, zone);
-        var last = Calendar.Day(end, zone).AddDays(-1);
+        const int batchDays = 100;
+        var first = Calendar.Day(jobStart, zone);
+        if (Calendar.Utc(first, zone) < jobStart) first = first.AddDays(1);
+        int elapsed = Math.Max(0, Calendar.Day(start, zone).DayNumber - first.DayNumber);
+        var block = first.AddDays(elapsed / batchDays * batchDays);
+        if (Calendar.Utc(block, zone) < start) block = block.AddDays(batchDays);
+        if (Calendar.Utc(block, zone) >= end) return [];
+        first = block;
+        var last = Calendar.Day(jobEnd, zone).AddDays(-1);
+        if (last.DayNumber - first.DayNumber >= batchDays) last = first.AddDays(batchDays - 1);
         if (last < first) return [];
         var metadata = await db.Connections.AsNoTracking().SingleAsync(c => c.PlantId == plantId, ct);
         var mapping = JsonSerializer.Deserialize<SungrowMapping>(metadata.Capabilities)?.Daily;

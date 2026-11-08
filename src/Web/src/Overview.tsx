@@ -6,7 +6,7 @@ import { bounds, Chart, chartOptions, date, eventBounds, number, Panel, pct, sta
 const labels = { pv: 'PV-Erzeugung', load: 'Hausverbrauch', import: 'Netzbezug', export: 'Einspeisung',
   charge: 'Batterieladung', discharge: 'Batterieentladung', soc: 'Ladezustand', cost: 'Netto-Kosten' }
 type Key = keyof typeof labels
-const energy: Key[] = ['pv', 'load', 'import', 'export']
+const energy = ['pv', 'load', 'import', 'export'] as const
 const storage: Key[] = ['charge', 'discharge', 'soc']
 const keys = [...energy, ...storage]
 
@@ -27,6 +27,14 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
   if (!state?.data) return <Status error={state?.error} />
   const { report, comparison, buckets } = state.data
   const m = report.metrics
+  const dailyMetrics = report.providerMetrics
+  function dailyRatio(total: 'pv' | 'load', deducted: 'export' | 'import') {
+    const a = dailyMetrics?.[total], b = dailyMetrics?.[deducted]
+    return a?.kwh != null && a.kwh > 0 && b?.kwh != null && a.coverage >= .999999 && b.coverage >= .999999
+      ? 1 - b.kwh / a.kwh : null
+  }
+  const estimatedAutarky = dailyRatio('load', 'import')
+  const estimatedRetention = dailyRatio('pv', 'export')
   const cost = report.cost
   const seriesKeys = day ? keys : perspective === 'energy' ? energy : perspective === 'storage' ? storage : ['cost'] as Key[]
   const chartNames = buckets.map(p => p.local || p.day || '')
@@ -49,10 +57,17 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
         data: buckets.map(b => { const value = points.get(b.start || '')?.[key]; return value == null ? null : key === 'soc' ? value * 100 : value }) })
   }
   const kpis = [...energy.map(key => {
-    const channel = m[key as keyof Pick<typeof m, 'pv' | 'load' | 'import' | 'export'>]
-    return [labels[key], number(channel.kwh) + ' kWh', 'Abdeckung ' + pct(channel.coverage)]
-  }), ['Autarkiegrad', pct(m.autarky), 'Anteil des erfassten Hausverbrauchs'],
-  ['Eigenverbrauchsquote', pct(m.retention), 'Inkl. Speicherverluste und Bestandsänderung'],
+    const daily = report.providerMetrics?.[key]
+    const useDaily = daily?.kwh != null && daily.coverage >= m[key].coverage
+    const channel = useDaily ? daily : m[key]
+    return [labels[key], number(channel.kwh) + ' kWh',
+      (useDaily ? 'Sungrow-Tageswerte · ' : '') + 'Abdeckung ' + pct(channel.coverage)]
+  }), ['Autarkiegrad', pct(dailyMetrics?.autarky ?? m.autarky ?? estimatedAutarky),
+    dailyMetrics?.autarky != null || m.autarky != null ? 'Anteil des erfassten Hausverbrauchs'
+      : estimatedAutarky != null ? 'Näherung aus Tageswerten · setzt Betrieb ohne Netzladen voraus' : 'Benötigt Verbrauch und Netzbezug'],
+  ['Eigenverbrauchsquote', pct(dailyMetrics?.retention ?? m.retention ?? estimatedRetention),
+    dailyMetrics?.retention != null || m.retention != null ? 'Inkl. Speicherverluste und Bestandsänderung'
+      : estimatedRetention != null ? 'Näherung aus Tageswerten · setzt reine PV-Einspeisung voraus' : 'Benötigt PV-Ertrag und Einspeisung'],
   ['Netto-Stromkosten', number(cost.net ?? (cost.importCoverage > 0 || cost.exportCoverage > 0 || cost.fixed > 0 ? cost.coveredNet : null)) + ' €',
     cost.complete ? 'Bezug und Grundpreis abzüglich Erlös' : 'Nur gedeckter Teilbetrag'],
   ['Datenabdeckung', pct(m.coverage), 'Gemeinsame PV- und Verbrauchsdaten']]
@@ -64,6 +79,7 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
       <p>{bounds(report.period)} · {report.timeZone}</p></div><a className="button secondary" href={base + '/exports/overview?' + query}>CSV exportieren</a></div>
     {report.warnings.map(w => <Status key={w} text={w} />)}
     {report.providerMetrics && <Panel title="Sungrow-Tagesaggregate"><p>PV {number(report.providerMetrics.pv.kwh)} kWh · Verbrauch {number(report.providerMetrics.load.kwh)} kWh · Bezug {number(report.providerMetrics.import.kwh)} kWh · Einspeisung {number(report.providerMetrics.export.kwh)} kWh.</p>
+      <p>Batterieladung {number(report.providerMetrics.charge.kwh)} kWh · Batterieentladung {number(report.providerMetrics.discharge.kwh)} kWh.</p>
       {report.providerExportDifference != null && <p>Abweichung beim Export, Provider minus Zeitreihe · {number(report.providerExportDifference)} kWh.</p>}</Panel>}
     <div className="kpis">{kpis.map(([title, value, detail]) => <article key={title}><span>{title}</span><strong>{value}</strong><small>{detail}</small></article>)}</div>
     <Panel title={day ? 'Gemessener Tagesverlauf' : 'Verlauf im Zeitraum'}>

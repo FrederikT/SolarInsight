@@ -9,3 +9,17 @@ label{display:grid;gap:.3rem;font-size:.93rem;font-weight:620}input,select{max-w
 .energy-rings{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:1rem}.energy-rings .chart{height:230px}.energy-rings ul{list-style:none;padding:0}.energy-swatch{display:inline-block;width:.8em;height:.8em;border-radius:50%;margin-inline-end:.5em}
 @media(max-width:600px){.plant{margin-left:0}.header-inner{gap:8px}.chart{height:300px}nav button{padding:.5rem}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis article>strong{font-size:1.2rem}}
 
+
+.live-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: .75rem; }
+.live-flow > div { display: grid; gap: .2rem; padding: .75rem; border: 1px solid #aaa; border-radius: .5rem; }
+.live-flow span { font-size: 1.25rem; }
+progress { width: min(100%, 32rem); height: 1rem; }
+
+@media (min-width: 660px) {
+  .live-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: ". pv ." "grid load battery" ". . soc"; }
+  .live-pv { grid-area: pv; }
+  .live-grid { grid-area: grid; }
+  .live-load { grid-area: load; }
+  .live-battery { grid-area: battery; }
+  .live-soc { grid-area: soc; }
+}

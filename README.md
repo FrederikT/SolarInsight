@@ -1,6 +1,6 @@
 # Solar Insight
 
-Selbst hostbare PV-Analyse mit ASP.NET Core, React, ECharts und PostgreSQL. Der Demo-Modus enthält 24 vollständige synthetische Monate in Fünf-Minuten-Auflösung. Analysen und Szenarien verwenden denselben serverseitigen Rechenkern.
+Selbst hostbare PV-Analyse mit ASP.NET Core, React, ECharts und PostgreSQL. Der Demo-Modus enthält 24 vollständige synthetische Monate in Fünf-Minuten-Auflösung. Analysen und Szenarien verwenden denselben serverseitigen Rechenkern. „Jetzt“, „Heute“ und die Live-Messpunktprobe verwenden dieselben Ansichten wie im privaten Betrieb und spielen einen gekennzeichneten synthetischen Demotag ab.
 
 ![Übersicht mit synthetischen Demodaten](docs/demo-uebersicht.png)
 
@@ -76,7 +76,7 @@ docker compose -p solar-private -f compose.yaml -f compose.sungrow.yaml up --bui
 
 Während der Erstinstallation zusätzlich `-f compose.owner.yaml` angeben. Die manuelle Codeübergabe ist eine dokumentierte Abweichung vom automatisierten OAuth-Weiterleitungsablauf. Sie benötigt einen vom Betreiber kontrollierten Empfang der registrierten Rücksprungadresse. Unterstützte State-/PKCE-Parameter sind für die konkrete freigegebene Anwendung noch zu bestätigen.
 
-Der Abstand von standardmäßig 45 Sekunden zwischen Provideraufrufen ist eine konservative Betriebsannahme, kein behauptetes Sungrow-Rate-Limit. Die Werte `SUNGROW_CALL_SPACING_SECONDS` und `SUNGROW_REFRESH_MINUTES` sind mit dem tatsächlich gebuchten Kontingent abzugleichen. Der Hintergrundimport liest abgeschlossene historische Tage und wiederholt ein zweitägiges Korrekturfenster. Ein automatischer Lauf holt höchstens 14 weitere Kalendertage auf.
+Solar Insight startet Provideraufrufe standardmäßig im Abstand von mindestens 15 Sekunden. Die Werte `SUNGROW_CALL_SPACING_SECONDS` und `SUNGROW_REFRESH_MINUTES` sind mit dem gebuchten Kontingent abzugleichen. Der Import fragt Tagesaggregate vor den Minutenwerten des jeweiligen Blocks ab. Ein Block umfasst bis zu 100 vollständige Kalendertage. Der Hintergrunddienst prüft abgeschlossene Tage und lädt gezielt fehlende Minutenfenster und Tagesaggregate nach. Importvorschau, Live-Anzeige und der optionale Heimnetz-Lesezugang sind in der [Betriebsdokumentation](docs/operations.md) beschrieben.
 
 ## Bedienung
 

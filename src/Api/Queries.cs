@@ -13,6 +13,18 @@ public record Report(Period Period, string TimeZone, string Revision, double? Re
 public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[] Rows, Tariffs Tariffs,
     Battery? Battery, bool KnownPaths, bool ConfigurationBoundary, string Revision, Aggregate[] Aggregates)
 {
+    public (DateTimeOffset Since, Battery? Battery)[] BatteryTimeline { get; init; } = [];
+
+    public Battery? BatteryFor(Interval row)
+    {
+        foreach (var (since, battery) in BatteryTimeline)
+        {
+            if (row.Start >= since) return battery;
+            if (row.End > since) return null;
+        }
+        return null;
+    }
+
     public decimal Hours => (decimal)(Calendar.Utc(Period.End, Zone) - Calendar.Utc(Period.Start, Zone)).Ticks /
         TimeSpan.TicksPerHour;
     public Report Report() => CreateReport(Period, Rows);
@@ -103,7 +115,11 @@ public sealed class Queries(Store db, RuntimeOptions options)
             JsonSerializer.Deserialize<SungrowMapping>(connection.Capabilities)?.ConfirmedAcPaths == true);
         var result = new DataView(plant, zone, period, rows.Select(r => r.Value()).ToArray(), new(prices.Select(p => p.Value())),
             config is null ? null : JsonSerializer.Deserialize<Battery>(config.Parameters), knownPaths,
-            configurations.Any(c => c.Since > period.Start), plant.Revision.ToString(CultureInfo.InvariantCulture), aggregates);
+            configurations.Any(c => c.Since > period.Start), plant.Revision.ToString(CultureInfo.InvariantCulture), aggregates)
+        {
+            BatteryTimeline = configurations.Select(c => (Calendar.Utc(c.Since, zone),
+                JsonSerializer.Deserialize<Battery>(c.Parameters))).ToArray()
+        };
         await snapshot.CommitAsync(ct);
         return result;
     }

@@ -32,6 +32,12 @@ public sealed class ImportJob
     public DateTimeOffset Start { get; set; }
     public DateTimeOffset End { get; set; }
     public DateTimeOffset Checkpoint { get; set; }
+    public DateTimeOffset? Started { get; set; }
+    public DateTimeOffset? Cancelled { get; set; }
+    public int Windows { get; set; }
+    public int EmptyWindows { get; set; }
+    public long ReadingRows { get; set; }
+    public long AggregateRows { get; set; }
     public DateTimeOffset? LastAttempt { get; set; }
     public DateTimeOffset? LastSuccess { get; set; }
     public string Status { get; set; } = "pending";
@@ -55,9 +61,20 @@ public sealed class Store(DbContextOptions<Store> options) : DbContext(options)
     public DbSet<ProviderConnection> Connections => Set<ProviderConnection>();
     public DbSet<Aggregate> Aggregates => Set<Aggregate>();
     public DbSet<ImportJob> Imports => Set<ImportJob>();
+    public DbSet<LiveMeasurement> LiveMeasurements => Set<LiveMeasurement>();
+    public DbSet<LivePoll> LivePolls => Set<LivePoll>();
+    public DbSet<LiveGap> LiveGaps => Set<LiveGap>();
+    public DbSet<HistoryGap> HistoryGaps => Set<HistoryGap>();
+    public DbSet<HistoryScan> HistoryScans => Set<HistoryScan>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
+        builder.Entity<LiveMeasurement>().HasKey(m => new { m.PlantId, m.MeasuredAt, m.Channel, m.Source });
+        builder.Entity<LivePoll>().HasKey(p => new { p.PlantId, p.FetchedAt });
+        builder.Entity<LiveGap>().HasKey(g => new { g.PlantId, g.Channel, g.Start });
+        builder.Entity<HistoryGap>().HasKey(g => new { g.PlantId, g.Start, g.Kind });
+        builder.Entity<HistoryGap>().HasIndex(g => new { g.PlantId, g.Open, g.Due });
+        builder.Entity<HistoryScan>().HasKey(s => s.PlantId);
         builder.Entity<Reading>().HasKey(r => new { r.PlantId, r.Start });
         builder.Entity<StoredTariff>().HasIndex(t => new { t.PlantId, t.Kind, t.Start });
         builder.Entity<Plant>().HasIndex(p => p.Active).IsUnique().HasFilter("\"Active\" = TRUE");
@@ -66,7 +83,8 @@ public sealed class Store(DbContextOptions<Store> options) : DbContext(options)
         builder.Entity<ProviderConnection>().HasKey(x => x.PlantId);
         builder.Entity<Aggregate>().HasKey(x => new { x.PlantId, x.Point, x.Start, x.Origin });
         foreach (var type in new[] { typeof(Reading), typeof(StoredTariff), typeof(Configuration), typeof(Device),
-            typeof(ProviderConnection), typeof(Aggregate), typeof(ImportJob) })
+            typeof(ProviderConnection), typeof(Aggregate), typeof(ImportJob), typeof(LiveMeasurement),
+            typeof(LivePoll), typeof(LiveGap), typeof(HistoryGap), typeof(HistoryScan) })
             builder.Entity(type).HasOne(typeof(Plant)).WithMany().HasForeignKey("PlantId");
     }
 }
@@ -76,9 +94,9 @@ public static class Storage
     public static readonly Guid DemoId = Guid.Parse("92b5a13b-6607-4182-a240-65092f605bc3");
     public static readonly Guid LocalId = Guid.Parse("6ad1526e-319f-4dc7-89bd-f30101e26254");
 
-    public static async Task UpsertAggregates(Store db, Guid plant, Aggregate[] rows, CancellationToken ct)
+    public static async Task<int> UpsertAggregates(Store db, Guid plant, Aggregate[] rows, CancellationToken ct, bool fillOnly = false)
     {
-        if (rows.Length == 0) return;
+        if (rows.Length == 0) return 0;
         if (rows.Any(r => r.PlantId != plant || r.Origin != "provider" || r.Kwh < 0 || r.End <= r.Start))
             throw new ArgumentException("Ungültiges Anlagenaggregat.");
         string json = JsonSerializer.Serialize(rows);
@@ -87,16 +105,18 @@ public static class Storage
             ON CONFLICT ("PlantId", "Point", "Start", "Origin") DO UPDATE SET
               "End" = excluded."End", "Kwh" = excluded."Kwh", "Coverage" = excluded."Coverage",
               "Revision" = excluded."Revision"
-            WHERE "Aggregates" IS DISTINCT FROM excluded
+            WHERE "Aggregates" IS DISTINCT FROM excluded AND (NOT {fillOnly} OR
+              "Aggregates"."Coverage" < 1 OR "Aggregates"."End" <> excluded."End")
             """, ct);
         if (changed > 0)
             await db.Plants.Where(p => p.Id == plant).ExecuteUpdateAsync(s => s.SetProperty(p => p.Revision,
                 p => p.Revision + 1), ct);
+        return changed;
     }
 
-    public static async Task Upsert(Store db, Guid plant, Interval[] input, CancellationToken ct)
+    public static async Task<int> Upsert(Store db, Guid plant, Interval[] input, CancellationToken ct)
     {
-        if (input.Length == 0) return;
+        if (input.Length == 0) return 0;
         if (input.Any(r => r.Start.Offset != TimeSpan.Zero || r.End.Offset != TimeSpan.Zero || r.End <= r.Start ||
             new[] { r.Pv, r.Load, r.Import, r.Export, r.Charge, r.Discharge }.Any(x => x < 0) ||
             r.Soc is < 0 or > 1 || r.OpeningSoc is < 0 or > 1))
@@ -123,6 +143,7 @@ public static class Storage
             await db.Aggregates.Where(a => a.PlantId == plant && a.Origin == "integrated" &&
                 a.Start < end && a.End > start).ExecuteDeleteAsync(ct);
         }
+        return changed;
     }
 }
 

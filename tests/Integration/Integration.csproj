@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk"><ItemGroup>
-<ProjectReference Include="../../src/Infrastructure/Infrastructure.csproj" />
+<ProjectReference Include="../../src/Api/Api.csproj" />
 <FrameworkReference Include="Microsoft.AspNetCore.App" />
 <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
 <PackageReference Include="xunit" Version="2.9.2" />

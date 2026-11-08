@@ -40,7 +40,7 @@ public static class Endpoints
             var rule = JsonSerializer.Deserialize<EventRule>(view.Plant.Rules) ?? new();
             var battery = view.ConfigurationBoundary ? null : view.Battery;
             var flow = EnergyInsights.Analyze(view.Rows, view.KnownPaths, battery, rule.SocTolerance, view.Zone, view.Period.Days == 1);
-            var storage = StorageInsights.Profile(view.Rows, view.Period, view.Zone, battery, rule.SocTolerance, hour);
+            var storage = StorageInsights.Profile(view.Rows, view.Period, view.Zone, battery, rule.SocTolerance, hour, view.BatteryFor);
             var phases = mix is { } category ? flow.Phases.Where(p => (int)p.Mix == category).ToArray() : [];
             NightDetail[] nights = [];
             if (hour is >= 22 or < 6)
@@ -48,7 +48,7 @@ public static class Endpoints
                 var byDay = view.Rows.ToLookup(r => Calendar.Day(r.Start, view.Zone));
                 nights = storage.Days.Where(d => d.Import == true).Select(d => hour < 6 ? d.Day.AddDays(-1) : d.Day)
                     .Distinct().Select(d => StorageInsights.Night(byDay[d].Concat(byDay[d.AddDays(1)]).ToArray(),
-                        d, view.Zone, battery, rule.SocTolerance)).ToArray();
+                        d, view.Zone, battery, rule.SocTolerance, view.BatteryFor)).ToArray();
             }
             return Results.Ok(new
             {
@@ -113,12 +113,15 @@ public static class Endpoints
                 coverage = valid.Sum(r => r.Hours) / view.Hours,
                 assumption = "Flexibel regelbare Last ohne Mindestleistung. Export nach bisheriger Speichernutzung." };
         });
-        api.MapGet("/data-status", async ([AsParameters] ViewPeriod query, Queries q, Store db, CancellationToken ct) =>
+        api.MapGet("/data-status", async ([AsParameters] ViewPeriod query, Queries q, Store db, LiveProvider live, SyntheticProvider synthetic, CancellationToken ct) =>
         {
             var view = await Read(q, query, ct);
             var latest = await db.Readings.Where(r => r.PlantId == view.Plant.Id).MaxAsync(r => (DateTimeOffset?)r.End, ct);
             var job = await db.Imports.AsNoTracking().Where(j => j.PlantId == view.Plant.Id)
-                .OrderByDescending(j => j.LastAttempt).FirstOrDefaultAsync(ct);
+                .OrderByDescending(j => j.Status == "pending" || j.Status == "running")
+                .ThenByDescending(j => j.Cancelled ?? j.LastAttempt ?? j.Start).FirstOrDefaultAsync(ct);
+            var progress = job is null ? null : ImportProgress.Describe(job,
+                view.Plant.Synthetic ? synthetic.Window : live.Window, DateTimeOffset.UtcNow);
             var gaps = new List<object>();
             var cursor = Calendar.Utc(view.Period.Start, view.Zone);
             foreach (var row in view.Rows.Where(r => r.Pv.HasValue && r.Load.HasValue))
@@ -128,7 +131,12 @@ public static class Endpoints
             }
             var end = Calendar.Utc(view.Period.End, view.Zone);
             if (cursor < end && gaps.Count < 100) gaps.Add(new { start = cursor, end });
-            return new { report = view.Report(), latest, job, gaps, provider = view.Plant.Synthetic ?
+            var periodStart = Calendar.Utc(view.Period.Start, view.Zone);
+            var repair = await db.HistoryGaps.AsNoTracking().Where(g => g.PlantId == view.Plant.Id &&
+                g.Start < end && g.End > periodStart)
+                .OrderByDescending(g => g.Open).ThenBy(g => g.Start)
+                .Select(g => new { g.Start, g.End, g.Kind, g.Attempts, g.Due, g.Open, g.Error }).Take(100).ToArrayAsync(ct);
+            return new { report = view.Report(), latest, job, progress, gaps, repair, provider = view.Plant.Synthetic ?
                 "Synthetische Demodaten" : view.Plant.ProviderId is null ? "Sungrow-Freigabe und Messpunktvalidierung ausstehend" : "Sungrow-Leseimport" };
         });
         api.MapGet("/settings/plant", async (Queries q, Store db, CancellationToken ct) =>
@@ -155,6 +163,11 @@ public static class Endpoints
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             var plant = await LockPlant(db, current.Id, ct);
             plant.Name = input.Name.Trim();
+            if (plant.ProviderId is not null && plant.Zone != input.Zone &&
+                (await db.Readings.AnyAsync(r => r.PlantId == plant.Id, ct) ||
+                 await db.LiveMeasurements.AnyAsync(r => r.PlantId == plant.Id, ct) ||
+                 await db.Aggregates.AnyAsync(r => r.PlantId == plant.Id, ct)))
+                throw new ArgumentException("Eine Änderung der Anlagenzeitzone erfordert eine Datenmigration.");
             plant.Zone = input.Zone;
             plant.Rules = JsonSerializer.Serialize(input.Rule);
             plant.Revision++;

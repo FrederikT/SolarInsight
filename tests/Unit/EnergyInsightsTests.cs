@@ -67,6 +67,22 @@ public class EnergyInsightsTests
     }
 
     [Fact]
+    public void StorageLimitsFollowConfigurationEffectiveOnEachDay()
+    {
+        var day = new DateOnly(2026, 10, 1);
+        var changed = Origin.AddDays(1);
+        var replacement = Battery with { MinSoc = .3m };
+        Battery? Limits(Interval row) => row.Start < changed ? Battery : replacement;
+        var rows = new[] { Row(Origin.AddHours(3), 0, 1, 1, soc: .3m),
+            Row(changed.AddHours(3), 0, 1, 1, soc: .3m) };
+        var profile = StorageInsights.Profile(rows, new(day, day.AddDays(2)), TimeZoneInfo.Utc, null, .02m, 3, Limits);
+        Assert.Equal(1, profile.Lower.Hours);
+        Assert.Equal(2, profile.Lower.EligibleHours);
+        Assert.Equal(new Frequency(1, 2), profile.Hours[3].EmptyImport);
+        Assert.Equal(.125m, profile.Hours[3].UsableSoc);
+    }
+
+    [Fact]
     public void DstUsesActualHoursAndCountsRepeatedHourOncePerDay()
     {
         var zone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
