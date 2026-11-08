@@ -20,6 +20,7 @@ public sealed class HistoryScan
     public Guid PlantId { get; set; }
     public DateOnly NextDay { get; set; }
     public DateTimeOffset Due { get; set; }
+    public DateTimeOffset? LastSuccess { get; set; }
 }
 
 public static class HistoryReconciliation

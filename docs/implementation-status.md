@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Geplante Verbesserungen](backlog.md) | Offen. Die Anforderungen und Abnahmekriterien stehen im Backlog. |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-03 umgesetzt und lokal mit synthetischen Daten oder Provider-Fixtures geprüft. CI-01 wartet auf Zugriff auf den GitLab-Lauf. |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | Entscheidung des Eigentümers offen. |
 
 ## Umsetzungsliste
@@ -99,3 +99,31 @@ Docker Compose hat das aktuelle Image gebaut und die bestehende Demo auf Port 80
 Zusätzlich starteten getrennte Compose-Projekte mit frischen Volumes für Demo und privaten Testbetrieb. Die Demo schloss den synthetischen Import ab. Bestanden sind 25 Unit-Tests, sechs Playwright-Tests gegen diese Compose-Projekte, ESLint, TypeScript und der Release-Build. Der neue Speichertest prüft, dass dieselbe SOC-Messung vor und nach einem Wechsel der Ladegrenze unterschiedlich eingeordnet wird.
 
 Die erneute Sungrow-Live-Abnahme bleibt offen. Die automatische Freigabeprüfung hat die lesende Abfrage privater Anlagendaten bis zu einer ausdrücklichen Betreiberfreigabe abgelehnt.
+
+## Backlog vom 8. November 2026
+
+### UX-01 · Oberfläche und Datenstatus
+
+Verbindung, letzter erfolgreicher Abruf und Importzustand stehen vor den technischen Details. Die Ansicht zeigt bei fehlender Einrichtung und Importfehlern den passenden nächsten Schritt. Der letzte erfolgreiche Abruf berücksichtigt Import, historischen Abgleich und Live-Cache. Details zu Import, Geräten, Messpunkten und Datenlücken sind aufklappbar. Die Übersicht unterscheidet fehlende Minutenwerte von verfügbaren Tageswerten.
+
+Playwright prüfte alle vier Hauptansichten bei 1400 und 375 px sowie das private Setup bei 375 px, einschließlich Fehlermeldung zur erneuten Autorisierung und Abrufstatus. Die Tests verwenden Demo- und Provider-Fixtures.
+
+### UX-02 · Setup und Betreiberprofil
+
+Das Setup fragt Autorisierung, Anlagenwahl und Zeitzone ab. Für neue Anlagen sind dokumentierte Tagesmesspunkte und Europe/Berlin voreingestellt. Bestehende Zuordnungen bleiben erhalten. Für Minuten-, Live- und EMS-Kanäle ohne bestätigtes Profil zeigt die Diagnose den fehlenden Kanal und den Grund. Bestätigte Sonderzuordnungen werden über die serverseitige [Betreiberdatei](operations.md#betreiberprofil-für-messpunkte) angewendet.
+
+Der normale Setup-Endpunkt weist mitgesendete Zuordnungen zurück. Der frühere Schreibzugriff auf Live-Zuordnungen ist entfernt. Playwright prüfte beide Fälle an der privaten HTTP-Instanz. Die PostgreSQL- und Sungrow-Vertragstests verwendeten eine synthetische Autorisierung, Anlagenliste und ein bestätigtes Betreiberprofil als Fixture. Die vollständige Abnahme an einer echten Anlage gehört weiterhin zu A25.
+
+### UX-03 · Automatischer Erstimport
+
+Die Anlagenaktivierung legt den Import standardmäßig für 30 abgeschlossene Kalendertage in derselben Transaktion an. Wiederholte Bestätigung und Neustart behalten den Auftrag. Auch ein abgebrochener Auftrag wird bei erneuter Bestätigung nicht dupliziert. Leere Tage am Anfang stoppen den automatischen Erstimport nicht. Nach erfolgreichem Erstimport übernimmt der vorhandene historische Abgleich. Nachimport, kurzer Testimport für Minutenprofile und Abbruch bleiben erreichbar.
+
+Die PostgreSQL-Tests prüften den Auftrag über wiederholte Aktivierungen und neu erzeugte Providerinstanzen, Abbruch, Profiländerung und den Import nach leeren Anfangstagen. Playwright prüfte Vorschau, sichtbaren Fortschritt und Abbruch.
+
+### CI-01 · Pipeline
+
+Ein lokaler Testlauf auf leerem PostgreSQL scheiterte bei paralleler Initialisierung mit SQLSTATE `42701` an der bereits angelegten Spalte `Readings.Quality`. Ein sitzungsgebundener PostgreSQL-Advisory-Lock serialisiert jetzt Migration und Initialdaten über die einzelnen EF-Transaktionen hinweg. Der erneute Lauf auf leerer Testdatenbank war erfolgreich.
+
+Lokal bestanden der .NET Release-Publish, die EF-Modellprüfung, TypeScript, ESLint und Vite-Build, 25 Unit-Tests, 36 PostgreSQL- und Vertragstests sowie 9 Playwright-Tests gegen getrennte lokale Demo- und private Testinstanzen. Der Demo-Neustart erhielt die vollständige Monatsabdeckung. Der PostgreSQL-Restore in eine leere Datenbank enthielt die erwarteten Anlagen- und Tarifdaten. Diese Prüfung lief mit lokalem PostgreSQL und dem Release-Publish.
+
+Der Checkout enthält nur den GitHub-Remote und den Workflow `.github/workflows/ci.yml`. Die GitHub-Abfrage für den aktuellen Commit lieferte keine PR-Workflow-Läufe. Für die gemeldete GitLab-Pipeline fehlen Projekt- oder Pipeline-Link und Zugriff auf das fehlerhafte Jobprotokoll. Mit dem Link lässt sich die tatsächliche Ursache abgleichen und ein korrigierter Lauf verifizieren. Ein erfolgreicher GitLab-Lauf liegt noch nicht vor.

@@ -17,7 +17,7 @@ public static class ProviderEndpoints
         var provider = api.MapGroup("/provider").AddEndpointFilter(async (context, next) =>
             context.HttpContext.RequestServices.GetRequiredService<RuntimeOptions>().Demo
                 ? Results.StatusCode(403) : await next(context));
-        provider.MapGet("/status", async (LiveProvider live, Store db, CancellationToken ct) =>
+        provider.MapGet("/status", async (LiveProvider live, SungrowSetup setup, Store db, CancellationToken ct) =>
         {
             var active = await (from plant in db.Plants
                 join connection in db.Connections on plant.Id equals connection.PlantId
@@ -26,6 +26,7 @@ public static class ProviderEndpoints
             return new
             {
                 live.Configured,
+                defaultZone = setup.DefaultZone,
                 authorized = await db.Connections.AnyAsync(c => c.PlantId == Storage.LocalId, ct),
                 activeMapping = active is null ? null : new { active.id, active.Name, active.Zone,
                     mapping = JsonSerializer.Deserialize<SungrowMapping>(active.Capabilities) }

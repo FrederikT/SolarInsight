@@ -284,6 +284,97 @@ public class LiveImportTests
     }
 
     [Fact]
+    public async Task ActivationUsesServerMappingAndKeepsOneInitialJobAcrossConfirmations()
+    {
+        await using var db = Open();
+        await Importer.Initialize(db, false, default);
+        var file = Path.GetTempFileName();
+        var mappingFile = Path.GetTempFileName();
+        var id = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+        var previous = await db.Plants.AsNoTracking().Where(p => p.Active).Select(p => (Guid?)p.Id).SingleOrDefaultAsync();
+        try
+        {
+            File.WriteAllText(file, """{"appKey":"fixture-app","accessKey":"fixture-key","redirect":"http://127.0.0.1:8081/"}""");
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Sungrow:AppFile"] = file, ["Sungrow:CallSpacingSeconds"] = "1",
+                ["Sungrow:InitialHistoryDays"] = "7"
+            }).Build();
+            using var services = new ServiceCollection().AddScoped(_ => Open())
+                .AddSingleton(new SungrowSetup(config)).BuildServiceProvider();
+            using var http = new HttpClient(new Stub(request => Task.FromResult(Reply(
+                request.RequestUri!.Segments[^1] switch
+                {
+                    "token" => """{"access_token":"fixture-token","refresh_token":"fixture-refresh","expires_in":3600}""",
+                    "queryPowerStationList" => JsonSerializer.Serialize(new { pageList = new[] { new { ps_id = id, ps_name = "Setup fixture" } } }),
+                    "getDeviceListByPsId" => """{"pageList":[]}""",
+                    _ => throw new InvalidOperationException("Unerwarteter Provideraufruf")
+                }))));
+            var protection = new EphemeralDataProtectionProvider();
+            LiveProvider Provider() => new(services.GetRequiredService<IServiceScopeFactory>(),
+                protection, new SungrowDiscovery(http), config, new(false, "", false), NullLogger<LiveProvider>.Instance);
+            var provider = Provider();
+            await provider.Authorize("fixture-code", default);
+            await Assert.ThrowsAsync<ArgumentException>(() => provider.Activate(new("123"), default));
+            await provider.Activate(new(id), default);
+            await Provider().Activate(new(id), default);
+            var plant = await db.Plants.AsNoTracking().SingleAsync(p => p.ProviderId == id);
+            Assert.True(plant.Active);
+            Assert.Equal("Setup fixture", plant.Name);
+            Assert.Equal("Europe/Berlin", plant.Zone);
+            var stored = await db.Connections.AsNoTracking().SingleAsync(c => c.PlantId == plant.Id);
+            var mapping = JsonSerializer.Deserialize<SungrowMapping>(stored.Capabilities)!;
+            Assert.Empty(mapping.Points);
+            Assert.Null(mapping.Live);
+            Assert.Equal(new[] { 83022, 83118, 83102, 83072 }, mapping.Daily!.Points);
+            var job = await db.Imports.AsNoTracking().SingleAsync(j => j.PlantId == plant.Id);
+            Assert.Equal("pending", job.Status);
+            Assert.True(job.AutomaticInitial);
+            Assert.Equal(7, Calendar.Day(job.End, Zone).DayNumber - Calendar.Day(job.Start, Zone).DayNumber);
+            Assert.True(await ProviderEndpoints.Cancel(db, plant.Id, job.Id, default));
+            await Provider().Activate(new(id), default);
+            Assert.Equal("cancelled", (await db.Imports.AsNoTracking().SingleAsync(j => j.PlantId == plant.Id)).Status);
+
+            var confirmed = mapping with { Load = 83106, StepMinutes = 15 };
+            File.WriteAllText(mappingFile, JsonSerializer.Serialize(new Dictionary<string, SungrowMapping> { [id] = confirmed }));
+            config["Sungrow:MappingFile"] = mappingFile;
+            await Provider().Activate(new(id), default);
+            var updated = await db.Connections.AsNoTracking().SingleAsync(c => c.PlantId == plant.Id);
+            Assert.Equal(confirmed, JsonSerializer.Deserialize<SungrowMapping>(updated.Capabilities));
+            Assert.Single(await db.Imports.Where(j => j.PlantId == plant.Id).ToArrayAsync());
+        }
+        finally
+        {
+            await db.Plants.Where(p => p.ProviderId == id).ExecuteDeleteAsync();
+            if (previous is { } active)
+                await db.Plants.Where(p => p.Id == active).ExecuteUpdateAsync(s => s.SetProperty(p => p.Active, true));
+            File.Delete(file);
+            File.Delete(mappingFile);
+        }
+    }
+
+    [Fact]
+    public async Task AutomaticBackfillContinuesPastEmptyOpeningDays()
+    {
+        await using var db = Open();
+        await Importer.Initialize(db, false, default);
+        var plant = new Plant { Id = Guid.NewGuid(), Name = "New installation fixture" };
+        var job = new ImportJob { Id = Guid.NewGuid(), PlantId = plant.Id, Start = Start,
+            Checkpoint = Start, End = Start.AddDays(3), AutomaticInitial = true };
+        db.Plants.Add(plant);
+        db.Imports.Add(job);
+        await db.SaveChangesAsync();
+        var source = new HistoryFixture { Window = TimeSpan.FromDays(1), Empty = true };
+        Assert.True(await Importer.Advance(db, job.Id, source, default));
+        Assert.True(await Importer.Advance(db, job.Id, source, default));
+        source.Empty = false;
+        Assert.False(await Importer.Advance(db, job.Id, source, default));
+        Assert.Equal("completed", job.Status);
+        Assert.Equal(2, job.EmptyWindows);
+        Assert.NotNull(job.LastSuccess);
+    }
+
+    [Fact]
     public async Task ConcurrentDeviceReadsShareOneDocumentedCloudRequest()
     {
         await using (var db = Open()) await Importer.Initialize(db, false, default);
@@ -326,11 +417,12 @@ public class LiveImportTests
         }
         finally { File.Delete(file); }
 
-        static HttpResponseMessage Reply(string data) => new(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"result_code\":\"1\",\"result_data\":" + data + "}")
-        };
     }
+
+    static HttpResponseMessage Reply(string data) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("{\"result_code\":\"1\",\"result_data\":" + data + "}")
+    };
 
     sealed class Stub(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler) : HttpMessageHandler
     {
@@ -340,9 +432,9 @@ public class LiveImportTests
 
     sealed class HistoryFixture : IHistorySource
     {
-        public TimeSpan Window => TimeSpan.FromMinutes(5);
+        public TimeSpan Window { get; init; } = TimeSpan.FromMinutes(5);
         public int RefreshMinutes => 1440;
-        public bool Empty { get; init; }
+        public bool Empty { get; set; }
         public bool Wait { get; set; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -40,6 +40,7 @@ public sealed class ImportJob
     public long AggregateRows { get; set; }
     public DateTimeOffset? LastAttempt { get; set; }
     public DateTimeOffset? LastSuccess { get; set; }
+    public bool AutomaticInitial { get; set; }
     public string Status { get; set; } = "pending";
     public string? Error { get; set; }
 }

@@ -140,6 +140,9 @@ namespace Infrastructure.Migrations
                     b.Property<DateTimeOffset>("Due")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("LastSuccess")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateOnly>("NextDay")
                         .HasColumnType("date");
 
@@ -156,6 +159,9 @@ namespace Infrastructure.Migrations
 
                     b.Property<long>("AggregateRows")
                         .HasColumnType("bigint");
+
+                    b.Property<bool>("AutomaticInitial")
+                        .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset?>("Cancelled")
                         .HasColumnType("timestamp with time zone");

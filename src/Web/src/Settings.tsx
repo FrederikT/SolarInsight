@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { request, useData, type Battery, type Plant, type Rule, type Settings, type Tariff } from './api'
-import { BatteryFields, date, Numeric, number, Panel, Status } from './components'
-import { ProviderSetup } from './Provider'
-import { LiveSetup } from './LiveView'
+import { BatteryFields, date, localDay, Numeric, number, Panel, Status } from './components'
+import { LiveDiagnostics, ProviderSetup } from './ProviderSetup'
 
 const ruleDefaults: Rule = { kw: .1, minutes: 15, socTolerance: .02, highLoadKw: null }
 const emptyBattery: Battery = { capacity: 0, chargeKw: 0, dischargeKw: 0, chargeEfficiency: 1, dischargeEfficiency: 1, minSoc: 0, maxSoc: 1 }
@@ -16,20 +15,19 @@ export function SettingsView({ demo, plant, logout, onChange }: { demo: boolean;
   return <>
     <h1>Einstellungen</h1>
     <Panel title="Verbindung">
-      <p>Region EU · iSolarCloud Open API</p>
       {demo ? <p>Diese Instanz zeigt synthetische Demodaten. Anlagen- und Tarifparameter gelten für alle Besucher.</p> :
-        <><p>Für Live-Daten sind eine freigegebene Entwickleranwendung, die Autorisierung durch den Anlageneigentümer und ein bestätigter Messpunktvertrag erforderlich.</p>
-          <a href="https://academy.sungrow-emea.com/de/articles/331036-sungrow-s-api-developer-portal" rel="noreferrer">Sungrow-Anleitung zur Entwicklerfreigabe</a><ProviderSetup changed={changed} /></>}
-      {demo && <LiveSetup zone={plant.zone} demo />}
+        <ProviderSetup changed={changed} />}
+      {demo && <details><summary>Live-Diagnose mit Demodaten</summary><LiveDiagnostics zone={plant.zone} /></details>}
     </Panel>
     <Panel title="Anlage und Speicher">
-      {plant.devices.length > 0 && <ul>{plant.devices.map((device, i) => <li key={i}>{device.type} · {device.model}</li>)}</ul>}
+      {plant.devices.length > 0 && <details><summary>Geräte der Anlage</summary>
+        <ul>{plant.devices.map((device, i) => <li key={i}>{device.type} · {device.model}</li>)}</ul></details>}
       {settings?.data ? <PlantSettings key={version} data={settings.data} demo={demo} changed={changed} /> : <Status error={settings?.error} />}
     </Panel>
     <Panel title="Tarife">
-      {tariffs?.data ? <TariffSettings rows={tariffs.data} demo={demo} changed={changed} /> : <Status error={tariffs?.error} />}
+      {tariffs?.data ? <TariffSettings rows={tariffs.data} demo={demo} zone={plant.zone} changed={changed} /> : <Status error={tariffs?.error} />}
     </Panel>
-    {!demo && <Panel title="Lokaler Zugang"><PasswordForm logout={logout} /></Panel>}
+    {!demo && <Panel title="Lokaler Zugang"><details><summary>Passwort ändern</summary><PasswordForm logout={logout} /></details></Panel>}
   </>
 }
 
@@ -37,7 +35,7 @@ function PlantSettings({ data, demo, changed }: { data: Settings; demo: boolean;
   const first = data.configurations[0]
   const [name, setName] = useState(data.name)
   const [zone, setZone] = useState(data.zone)
-  const [since, setSince] = useState(first?.since || new Date().toISOString().slice(0, 10))
+  const [since, setSince] = useState(first?.since ?? localDay(new Date().toISOString(), data.zone))
   const [pvKwp, setPv] = useState(first?.pvKwp || 0)
   const [confirmed, setConfirmed] = useState(!!first?.battery)
   const [battery, setBattery] = useState(first?.battery ?? emptyBattery)
@@ -58,19 +56,19 @@ function PlantSettings({ data, demo, changed }: { data: Settings; demo: boolean;
         <Numeric label="PV-Nennleistung (kWp)" value={pvKwp} change={setPv} max={1000} /></div>
       <label className="check"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /> Speicherparameter manuell bestätigen</label>
       {confirmed && <BatteryFields value={battery} change={setBattery} />}
-      <h3>Analyseschwellen</h3>
+      <details><summary>Analyseschwellen</summary>
       <div className="fields">
         <Numeric label="Leistungsschwelle (kW)" value={rule.kw} change={kw => setRule({ ...rule, kw })} min={.001} max={100} />
         <Numeric label="SOC-Toleranz (Prozentpunkte)" value={rule.socTolerance * 100} change={v => setRule({ ...rule, socTolerance: v / 100 })} max={25} />
         <Numeric label="Mindestdauer (Minuten)" value={rule.minutes} change={minutes => setRule({ ...rule, minutes })} min={1} max={1440} step="1" />
         <Numeric label="Hohe Last (kW, 0 = aus)" value={rule.highLoadKw ?? 0} change={v => setRule({ ...rule, highLoadKw: v || null })} max={100} />
-      </div>
+      </div></details>
       {error && <Status error={error} />}<button>Anlagenparameter speichern</button>
     </form>}
   </>
 }
 
-function TariffSettings({ rows, demo, changed }: { rows: Tariff[]; demo: boolean; changed: () => void }) {
+function TariffSettings({ rows, demo, zone, changed }: { rows: Tariff[]; demo: boolean; zone: string; changed: () => void }) {
   const [edit, setEdit] = useState<Tariff>()
   const [review, setReview] = useState<'save' | 'delete'>()
   const [error, setError] = useState('')
@@ -84,11 +82,15 @@ function TariffSettings({ rows, demo, changed }: { rows: Tariff[]; demo: boolean
   })
   return <>
     <p>Beginn inklusive, Ende exklusiv um Mitternacht in der Anlagenzeitzone. Preise wie tatsächlich bezahlt oder erhalten.</p>
-    {gap && <Status text="Tariflücken vorhanden. Kosten werden nur für abgedeckte Intervalle ausgewiesen." />}
+    {!rows.length ? <Status text="Noch keine Tarife erfasst. Ergänze deinen Bezugs- und Einspeisetarif, um Stromkosten zu sehen." /> :
+      gap && <Status text="Tariflücken vorhanden. Kosten werden nur für abgedeckte Intervalle ausgewiesen." />}
     <ul>{rows.map(t => <li key={t.id}>{describe(t)} {!demo && <button type="button" className="link" onClick={() => {
       setEdit(t); setReview(undefined); setError('')
     }}>Bearbeiten</button>}</li>)}</ul>
-    {!demo && <button className="secondary" onClick={() => { setEdit({ id: '', kind: 0, start: '', end: null, price: 0 }); setReview(undefined) }}>Tarif hinzufügen</button>}
+    {!demo && <button className="secondary" onClick={() => {
+      setEdit({ id: '', kind: 0, start: localDay(new Date().toISOString(), zone), end: null, price: 0 })
+      setReview(undefined); setError('')
+    }}>Tarif hinzufügen</button>}
     {edit && !review && <form onSubmit={e => { e.preventDefault(); setReview('save') }}>
       <div className="fields">
         <label>Tarifart<select value={edit.kind} onChange={e => setEdit({ ...edit, kind: Number(e.target.value) })}>

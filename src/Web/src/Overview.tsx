@@ -91,9 +91,11 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
         {day && simulation && <label className="check"><input type="checkbox" checked={model} onChange={e => setModel(e.target.checked)} /> Szenario einblenden</label>}
       </div>
       {modeled?.error && <Status error={modeled.error} />}
-      {buckets.some(b => b.pv != null || b.load != null || b.import != null || b.export != null)
+      {chartSeries.some(series => series.data.some(value => value != null))
         ? <Chart label={day ? 'Tagesverlauf mit Leistung und Ladezustand' : 'Energieverlauf'} option={chartOptions(chartNames, unit, chartSeries, !!day)}
-          click={day ? undefined : drill} /> : <Status text="Für diesen Zeitraum liegen noch keine Messwerte vor." />}
+          click={day ? undefined : drill} /> : <Status text={day && dailyMetrics ?
+            'Für diesen Tag liegen Tageswerte vor. Ein Leistungsverlauf benötigt Minutenmesswerte.' :
+            'Für diese Ansicht liegen im gewählten Zeitraum keine Daten vor.'} />}
       {comparison && <p>Vergleich {bounds(comparison.period)} · Netzbezug {number(comparison.metrics.import.kwh)} kWh · Einspeisung {number(comparison.metrics.export.kwh)} kWh · Netto {number(comparison.cost.net)} €{comparison.incomplete ? ' · laufend' : ''}{comparison.metrics.coverage < .999 ? ' · Teildaten' : ''}</p>}
       {perspective === 'storage' && <p>SOC zeitgewichtet {pct(m.socMean)} · Minimum {pct(m.socMin)} · Maximum {pct(m.socMax)}.</p>}
       {perspective === 'cost' && <p>Bezug {number(cost.import)} € · Grundpreis {number(cost.fixed)} € · Erlös {number(cost.export)} € · Tarif-/Datenabdeckung Bezug {pct(cost.importCoverage)}, Export {pct(cost.exportCoverage)}</p>}
@@ -118,7 +120,7 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
     <Panel title={day ? 'Ereignisse am Tag' : 'Beobachtungen im Zeitraum'}>
       {events?.data?.events.length ? <ul>{events.data.events.map(e => <li key={e.type + e.start}>
         <button className="link" onClick={() => { const p = eventBounds(e.start, e.end, report.timeZone); drill(p.first, p.exclusive) }}>{stamp(e.start, report.timeZone)}</button> · {e.text}
-      </li>)}</ul> : <p>Keine belegten Ereignisse im gewählten Zeitraum.</p>}
+      </li>)}</ul> : events?.data ? <p>Keine belegten Ereignisse im gewählten Zeitraum.</p> : <Status error={events?.error} />}
     </Panel>
   </>
 }

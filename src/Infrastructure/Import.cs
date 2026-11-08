@@ -65,7 +65,7 @@ public static class Importer
         var end = job.Checkpoint + provider.Window;
         if (end > job.End) end = job.End;
         var emptyLimit = job.Start.AddDays(2);
-        if (provider is IAggregateProvider && job.Checkpoint < emptyLimit && end > emptyLimit)
+        if (provider is IAggregateProvider && !job.AutomaticInitial && job.Checkpoint < emptyLimit && end > emptyLimit)
             end = emptyLimit;
         for (int attempt = 0; ; attempt++)
         {
@@ -110,7 +110,7 @@ public static class Importer
             job.Checkpoint = end;
             job.Status = end == job.End ? "completed" : "running";
             if (provider is IAggregateProvider && rows.Length == 0 && aggregates.Length == 0 &&
-                (end == job.End || end == emptyLimit) &&
+                (end == job.End || !job.AutomaticInitial && end == emptyLimit) &&
                 !await db.Readings.AnyAsync(r => r.PlantId == job.PlantId && r.Start >= job.Start && r.End <= end &&
                     (r.Pv != null || r.Load != null || r.Import != null || r.Export != null ||
                      r.Charge != null || r.Discharge != null || r.Soc != null || r.OpeningSoc != null), ct) &&
@@ -127,10 +127,31 @@ public static class Importer
 
     public static async Task Initialize(Store db, bool demo, CancellationToken ct)
     {
-        await db.Database.MigrateAsync(ct);
+        // Keep the same lock across schema migration and seeding, including EF's own transactions.
+        await db.Database.OpenConnectionAsync(ct);
+        bool locked = false;
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_lock(702928349)", ct);
+            locked = true;
+            await db.Database.MigrateAsync(ct);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            await Seed(db, demo, ct);
+            await transaction.CommitAsync(ct);
+        }
+        finally
+        {
+            try
+            {
+                if (locked) await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_unlock(702928349)", CancellationToken.None);
+            }
+            finally { await db.Database.CloseConnectionAsync(); }
+        }
+    }
+
+    static async Task Seed(Store db, bool demo, CancellationToken ct)
+    {
         Guid plantId = demo ? Storage.DemoId : Storage.LocalId;
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(702928349)", ct);
         var existing = await db.Plants.FindAsync([plantId], ct);
         bool activate = !await db.Plants.AnyAsync(p => p.Active && (demo || !p.Synthetic), ct);
         if (activate) await db.Plants.Where(p => p.Active).ExecuteUpdateAsync(s => s.SetProperty(p => p.Active, false), ct);
@@ -149,7 +170,6 @@ public static class Importer
         }
         else if (activate) existing.Active = true;
         await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
     }
 }
 

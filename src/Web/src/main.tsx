@@ -6,6 +6,7 @@ import { Overview } from './Overview'
 import { PeriodFields } from './PeriodFields'
 import { SettingsView } from './Settings'
 import { duration, ImportForm } from './Provider'
+import { connectionLabel, type ProviderStatus } from './ProviderSetup'
 import { LiveView } from './LiveView'
 import './style.css'
 
@@ -17,6 +18,16 @@ const kinds = [['day', 'Tag'], ['week', 'Woche'], ['month', 'Monat'], ['quarter'
 const iso = (d: Date) => d.toISOString().slice(0, 10)
 const plusDay = (s: string, count: number) => iso(new Date(Date.parse(s) + count * 86400000))
 type Session = Awaited<ReturnType<typeof session>>
+const importStates: Record<string, string> = { pending: 'Eingeplant', running: 'Läuft', completed: 'Abgeschlossen',
+  failed: 'Fehlgeschlagen', cancelled: 'Abgebrochen' }
+function importHelp(error: string) {
+  if (error === 'no-data') return 'Sungrow hat keine verwertbaren Messwerte geliefert. Prüfe in iSolarCloud einen abgeschlossenen Tag und vergleiche ihn mit der historischen Probe in den Einstellungen.'
+  if (error === 'auth') return 'Sungrow hat den Zugriff abgelehnt. Autorisiere die Anlage in den Einstellungen erneut und plane danach einen Nachimport ein.'
+  if (error === 'key-restore') return 'Die Autorisierung kann nicht gelesen werden. Stelle den ursprünglichen Schlüsselbestand wieder her oder autorisiere Sungrow erneut.'
+  if (['rate-limit', 'timeout', 'network', 'unavailable'].includes(error))
+    return 'Sungrow war vorübergehend nicht erreichbar oder das Abruflimit wurde erreicht. Prüfe Verbindung und Kontingent und plane später einen Nachimport ein.'
+  return 'Prüfe in den Einstellungen die Sungrow-Diagnose und das bestätigte Betreiberprofil, bevor du den Zeitraum erneut importierst.'
+}
 
 function App() {
   const [auth, setAuth] = useState<Session>()
@@ -39,6 +50,7 @@ function App() {
 function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: () => Promise<void> }) {
   const [url, setUrl] = useState(() => new URLSearchParams(location.search))
   const [version, refresh] = useState(0)
+  const [statusVersion, refreshStatus] = useState(0)
   const [cancelError, setCancelError] = useState<string>()
   const [cancelling, setCancelling] = useState(false)
   const [simulation, setSimulation] = useState<string | null>(null)
@@ -66,16 +78,18 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
   const query = new URLSearchParams(detail && detailEnd ? { kind: 'custom', start: detail, end: detailEnd } :
     { kind: day ? 'day' : kind, ...(day || anchor ? { anchor: day || anchor } : {}),
       ...(kind === 'custom' && !day ? { start, end } : {}) }).toString()
-  const status = useData<{ report: Report; latest: string | null; provider: string; progress: null | { percent: number; remainingWindows: number; seconds: number | null }; job: null | {
+  const status = useData<{ report: Report; latest: string | null; lastSuccess: string | null; provider: string; progress: null | { percent: number; remainingWindows: number; seconds: number | null }; job: null | {
     id: string; windows: number; emptyWindows: number; readingRows: number; aggregateRows: number; cancelled: string | null; status: string; checkpoint: string; start: string; end: string; error: string | null; lastAttempt: string | null; lastSuccess: string | null };
     repair: { start: string; end: string; kind: string; attempts: number; due: string; open: boolean }[];
-    gaps: { start: string; end: string }[] }>('/data-status?' + query, version)
+    gaps: { start: string; end: string }[] }>('/data-status?' + query, version + statusVersion)
+  const connection = useData<ProviderStatus>(!demo && page === 'status' ? '/provider/status' : null, version)
   const runningImport = status?.data?.job?.status === 'pending' || status?.data?.job?.status === 'running'
   useEffect(() => {
-    if (!runningImport) return
-    const timer = window.setInterval(() => refresh(v => v + 1), 5000)
+    if (!runningImport && (demo || page !== 'status')) return
+    const timer = window.setInterval(() => runningImport ? refresh(v => v + 1) : refreshStatus(v => v + 1),
+      runningImport ? 5000 : 30000)
     return () => window.clearInterval(timer)
-  }, [runningImport])
+  }, [demo, page, runningImport])
   const shift = (direction: number) => {
     const d = new Date((day || anchor) + 'T12:00:00Z')
     if (day || kind === 'day' || kind === 'week') d.setUTCDate(d.getUTCDate() + (day || kind === 'day' ? 1 : 7) * direction)
@@ -115,15 +129,25 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
               text={plant.data.capabilities.simulation ? 'Zeitraum wird geladen …' : 'Simulation benötigt PV- und Verbrauchszeitreihen und bestätigte Speicherparameter.'} />}
           <Surplus query={query} zone={zone} drill={drill} /></>}
         {page === 'status' && <><h1>Datenstatus</h1>{status?.data ? <>
-          <Panel title="Import und Verbindung"><p>{status.data.provider}</p>
-            {status.data.job && <dl className="facts">{Object.entries({
-              Importstatus: ({ pending: 'Ausstehend', running: 'Läuft', completed: 'Abgeschlossen', failed: 'Fehlgeschlagen', cancelled: 'Abgebrochen' } as Record<string, string>)[status.data.job.status],
+          <Panel title="Import und Verbindung">
+            <dl className="facts">
+              <div><dt>Verbindung</dt><dd>{demo ? status.data.provider : connection?.data ? connectionLabel(connection.data) :
+                connection?.error ? 'Status nicht verfügbar' : 'Wird geprüft …'}</dd></div>
+              <div><dt>Letzter erfolgreicher Datenabruf</dt><dd>{status.data.lastSuccess ?
+                stamp(status.data.lastSuccess, zone) : 'Noch kein erfolgreicher Abruf'}</dd></div>
+              <div><dt>Import</dt><dd>{status.data.job ? importStates[status.data.job.status] : 'Kein Importauftrag'}</dd></div>
+            </dl>
+            {!demo && connection?.error && <Status error={connection.error} />}
+            {!demo && connection?.data && (!connection.data.configured || !connection.data.authorized || !connection.data.activeMapping) &&
+              <div className="row actions"><p>Öffne die Einstellungen für den nächsten Einrichtungsschritt.</p>
+                <button className="secondary" onClick={() => update({ page: 'settings' })}>Verbindung einrichten</button></div>}
+            {status.data.job && <details><summary>Importdetails</summary><dl className="facts">{Object.entries({
               'Abgebrochen am': status.data.job.cancelled && stamp(status.data.job.cancelled, zone),
               Importbeginn: stamp(status.data.job.start, zone), Importende: stamp(status.data.job.end, zone),
               'Verarbeitet bis': stamp(status.data.job.checkpoint, zone), 'Letzter Versuch': status.data.job.lastAttempt && stamp(status.data.job.lastAttempt, zone),
               'Zuletzt Messwerte verarbeitet': status.data.job.error !== 'no-data' && status.data.job.lastSuccess
                 ? stamp(status.data.job.lastSuccess, zone) : null, Fehlerkategorie: status.data.job.error,
-            }).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v || '—'}</dd></div>)}</dl>}
+            }).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v || '—'}</dd></div>)}</dl></details>}
             {status.data.job && status.data.progress && <div>
               <label>Importfortschritt · {status.data.progress.percent} %
                 <progress max={100} value={status.data.progress.percent} /></label>
@@ -139,16 +163,22 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
               finally { setCancelling(false); refresh(v => v + 1) }
             }}>Import abbrechen</button>}
             {cancelError && <Status error={cancelError} />}
-            {status.data.job?.error === 'no-data' && <Status error="Im geprüften Bereich waren keine verwertbaren Messwerte verfügbar. Wähle in iSolarCloud einen abgeschlossenen Tag mit sichtbarer PV-Leistung und prüfe denselben Zeitraum per kurzem Testimport. Bleibt der Test leer, prüfe die Diagnose im App-Protokoll." />}
-            <p>Jüngster Messzeitpunkt {status.data.latest ? stamp(status.data.latest, zone) : '—'} · Revision {status.data.report.revision}</p>
-            {!demo && plant.data.capabilities.energy && !runningImport && <ImportForm changed={() => refresh(v => v + 1)} />}</Panel>
-          {!!status.data.repair.length && <Panel title="Historische Abstimmung">
+            {status.data.job?.error && <Status error={importHelp(status.data.job.error)} />}
+            <details><summary>Datenstand</summary><p>Jüngster Messzeitpunkt {status.data.latest ? stamp(status.data.latest, zone) : '—'} · Revision {status.data.report.revision}</p></details>
+            {!demo && plant.data.capabilities.energy && !runningImport && <details><summary>Nachimport und Testimport</summary>
+              <ImportForm testAvailable={plant.data.capabilities.timeseries} changed={() => refresh(v => v + 1)} /></details>}</Panel>
+          {!!status.data.repair.length && <Panel title="Historische Abstimmung"><details><summary>{status.data.repair.length} offene oder geplante Zeitfenster im Zeitraum</summary>
             <ul>{status.data.repair.map(gap => <li key={gap.kind + gap.start}>{stamp(gap.start, zone)} bis {stamp(gap.end, zone)} ·
               {gap.kind === 'daily' ? ' Tageswerte' : ' Minutenwerte'} · {gap.open ? 'offen nach ' + gap.attempts + ' Versuchen' :
                 'eingeplant ab ' + stamp(gap.due, zone)}</li>)}</ul>
-          </Panel>}
-          <Panel title="Abdeckung und Datenlücken"><p>Gemeinsame Abdeckung von PV und Hausverbrauch {pct(status.data.report.metrics.coverage)} · Auflösung {number(status.data.report.resolutionMinutes)} Minuten</p>
-            {status.data.gaps.length ? <ul>{status.data.gaps.map(g => <li key={g.start}>{stamp(g.start, zone)} bis {stamp(g.end, zone)}</li>)}</ul> :
+          </details></Panel>}
+          <Panel title="Abdeckung und Datenlücken">
+            <p>Gemeinsame Abdeckung von PV und Hausverbrauch {pct(status.data.report.metrics.coverage)}
+              {status.data.report.resolutionMinutes != null ? ' · Auflösung ' + number(status.data.report.resolutionMinutes) + ' Minuten' :
+                status.data.report.providerMetrics ? ' · Sungrow-Tageswerte' : ''}</p>
+            {!plant.data.capabilities.timeseries ? <p>Minutendaten benötigen ein bestätigtes Anlagenprofil.</p> :
+              status.data.gaps.length ? <details><summary>Lücken der Minutenhistorie anzeigen</summary>
+              <ul>{status.data.gaps.map(g => <li key={g.start}>{stamp(g.start, zone)} bis {stamp(g.end, zone)}</li>)}</ul></details> :
               <p>Keine Lücken in der gemeinsamen PV- und Verbrauchsreihe.</p>}</Panel></> : <Status error={status?.error} />}</>}
         {page === 'settings' && <SettingsView demo={demo} plant={plant.data} onChange={() => refresh(v => v + 1)} logout={refreshSession} />}
       </>}

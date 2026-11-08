@@ -34,6 +34,7 @@ builder.Services.AddSingleton<SyntheticProvider>();
 builder.Services.AddSingleton(new SungrowDiscovery(new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
     { Timeout = Timeout.InfiniteTimeSpan }));
 builder.Services.AddSingleton<LiveProvider>();
+builder.Services.AddSingleton<SungrowSetup>();
 builder.Services.AddDbContext<Store>(o => o.UseNpgsql(connection.ConnectionString));
 builder.Services.AddScoped<Queries>();
 builder.Services.AddSingleton<ImportCancellation>();

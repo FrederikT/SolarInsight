@@ -9,7 +9,8 @@ namespace SolarInsight.Api;
 public record AppKeys(string AppKey, string AccessKey, string Redirect);
 public record LiveTokens(string Access, string Refresh, DateTimeOffset Expires);
 public record AuthorizedPlant(string Id, string Name);
-public record LiveActivation(string Plant, string Zone, SungrowMapping Mapping, string? Name = null);
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+public record LiveActivation(string Plant, string? Zone = null, int Page = 1);
 
 public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionProvider protection,
     SungrowDiscovery sungrow, IConfiguration configuration, RuntimeOptions runtime, ILogger<LiveProvider> logger)
@@ -159,11 +160,10 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
 
     public async Task Activate(LiveActivation input, CancellationToken ct)
     {
-        if (input.Plant is null || input.Plant.Length is < 1 or > 30 || !input.Plant.All(char.IsAsciiDigit) ||
-            input.Zone is null || !input.Zone.Contains('/') || !TimeZoneInfo.TryFindSystemTimeZoneById(input.Zone, out _))
-            throw new ArgumentException("Anlage oder Zeitzone ungültig.");
-        if (input.Mapping is null) throw new ArgumentException("Messpunktzuordnung fehlt.");
-        input.Mapping.Validate();
+        if (input.Plant is null || input.Plant.Length is < 1 or > 30 || !input.Plant.All(char.IsAsciiDigit))
+            throw new ArgumentException("Eine autorisierte Anlage auswählen.");
+        var authorized = (await Plants(input.Page, ct)).FirstOrDefault(p => p.Id == input.Plant)
+            ?? throw new ArgumentException("Die Anlage ist nicht autorisiert. Anlagenliste neu laden.");
         var (keys, token) = await Access(ct);
         var devices = new Dictionary<string, (string Model, string Type)>();
         for (int page = 1; page <= 10; page++)
@@ -183,37 +183,52 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             }
             if (rows.Length < 10) break;
         }
-        if (input.Mapping.Live is { } live && !devices.ContainsKey(live.DeviceKey))
-            throw new ArgumentException("Das Live-Gerät gehört nicht zur ausgewählten Anlage.");
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Store>();
+        var setup = scope.ServiceProvider.GetRequiredService<SungrowSetup>();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(702928349)", ct);
-        var plant = await db.Plants.SingleOrDefaultAsync(p => p.ProviderId == input.Plant, ct);
-        var mapping = input.Mapping;
+        var plantId = await db.Plants.Where(p => p.ProviderId == input.Plant).Select(p => (Guid?)p.Id).SingleOrDefaultAsync(ct);
+        Plant? plant = null;
+        if (plantId is { } existingId)
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT pg_advisory_xact_lock(hashtextextended({existingId.ToString()}, 0))""", ct);
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT pg_advisory_xact_lock(hashtextextended({existingId.ToString()}, 1))""", ct);
+            plant = await Endpoints.LockPlant(db, existingId, ct);
+        }
+        var zone = input.Zone ?? plant?.Zone ?? setup.DefaultZone;
+        if (!zone.Contains('/') || !TimeZoneInfo.TryFindSystemTimeZoneById(zone, out _))
+            throw new ArgumentException("Ungültige Anlagenzeitzone. Eine IANA-Zeitzone wie Europe/Berlin angeben.");
+        var connection = plant is null ? null : await db.Connections.FindAsync([plant.Id], ct);
+        var old = connection is null ? null : JsonSerializer.Deserialize<SungrowMapping>(connection.Capabilities);
+        var mapping = setup.Resolve(input.Plant, old);
+        if (mapping.Live != old?.Live && mapping.Live is { } live && !devices.ContainsKey(live.DeviceKey))
+            throw new ArgumentException("Das Live-Gerät im Betreiberprofil gehört nicht zur ausgewählten Anlage.");
         if (plant is not null)
         {
-            var previous = await db.Connections.FindAsync([plant.Id], ct);
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"""SELECT pg_advisory_xact_lock(hashtextextended({plant.Id.ToString()}, 0))""", ct);
-            if (await db.Imports.AnyAsync(j => j.PlantId == plant.Id &&
+            bool changed = old != mapping || plant.Zone != zone;
+            if (changed && await db.Imports.AnyAsync(j => j.PlantId == plant.Id &&
                 (j.Status == "pending" || j.Status == "running"), ct))
-                throw new ArgumentException("Die Zuordnung kann nach Ende des laufenden Imports geändert werden.");
+                throw new ArgumentException("Die Konfiguration kann nach Ende des laufenden Imports angewendet werden.");
             bool data = await db.Readings.AnyAsync(r => r.PlantId == plant.Id, ct) ||
                 await db.Aggregates.AnyAsync(a => a.PlantId == plant.Id, ct);
-            var old = previous is null ? null : JsonSerializer.Deserialize<SungrowMapping>(previous.Capabilities);
-            mapping = mapping with { Live = old?.Live };
             var added = mapping.Daily;
-            bool additive = old is not null && (old with { Daily = added }) == mapping &&
+            bool additive = old is not null && (old with { Daily = added, Live = mapping.Live }) == mapping &&
                 (old.Daily?.Fields.All(field => added?.Fields.Contains(field) == true) ?? true);
-            if (data && (!additive || plant.Zone != input.Zone))
+            if (data && (!additive || plant.Zone != zone))
                 throw new ArgumentException("Eine Änderung der Messpunktzuordnung oder Zeitzone erfordert eine separate Datenmigration.");
+            if ((plant.Zone != zone || old?.Live is { } previous && mapping.Live?.Extends(previous) != true) &&
+                await db.LiveMeasurements.AnyAsync(m => m.PlantId == plant.Id, ct))
+                throw new ArgumentException("Eine Änderung bereits erfasster Live-Werte erfordert eine separate Datenmigration.");
+            if (changed) plant.Revision++;
         }
         await db.Plants.Where(p => p.Active).ExecuteUpdateAsync(s => s.SetProperty(p => p.Active, false), ct);
         if (plant is null)
         {
-            plant = new Plant { Id = Guid.NewGuid(), Name = input.Name is { Length: > 0 and <= 100 } ? input.Name : "Sungrow-Anlage",
-                ProviderId = input.Plant, Zone = input.Zone,
+            plant = new Plant { Id = Guid.NewGuid(), Name = authorized.Name is { Length: > 0 and <= 100 } ? authorized.Name : "Sungrow-Anlage",
+                ProviderId = input.Plant, Zone = zone,
                 Active = true, Revision = 1 };
             db.Plants.Add(plant);
         }
@@ -221,20 +236,19 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         {
             plant.Active = true;
             db.Entry(plant).Property(p => p.Active).IsModified = true;
-            plant.Zone = input.Zone;
-            plant.Revision++;
+            plant.Zone = zone;
         }
-        var connection = await db.Connections.FindAsync([plant.Id], ct);
         var metadata = new ProviderConnection(plant.Id, "mapped", "", JsonSerializer.Serialize(mapping));
         if (connection is null) db.Connections.Add(metadata);
         else db.Entry(connection).CurrentValues.SetValues(metadata);
-        foreach (var (id, info) in devices)
+        foreach (var (deviceId, info) in devices)
         {
-            var existing = await db.Devices.FindAsync([plant.Id, id], ct);
-            var metadataDevice = new Device(plant.Id, id, info.Model, info.Type);
+            var existing = await db.Devices.FindAsync([plant.Id, deviceId], ct);
+            var metadataDevice = new Device(plant.Id, deviceId, info.Model, info.Type);
             if (existing is null) db.Devices.Add(metadataDevice);
             else db.Entry(existing).CurrentValues.SetValues(metadataDevice);
         }
+        await setup.PlanInitial(db, plant, DateTimeOffset.UtcNow, ct);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
     }

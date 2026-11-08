@@ -50,7 +50,7 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
             .OrderBy(g => g.Open).ThenByDescending(g => g.Start).FirstOrDefaultAsync(ct);
         if (gap is not null)
         {
-            try { await Repair(db, gap, mapping, ct); }
+            try { await Repair(db, scan, gap, mapping, ct); }
             catch (Exception ex) when (ex is ProviderFailure or HttpRequestException or TimeoutException)
             {
                 gap.Error = ex is ProviderFailure failure ? failure.Category : ex is TimeoutException ? "timeout" : "network";
@@ -77,14 +77,17 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
             db.HistoryGaps.Add(new() { PlantId = plant, Start = start, End = end, Kind = "daily", Due = now });
     }
 
-    async Task Repair(Store db, HistoryGap gap, SungrowMapping mapping, CancellationToken ct)
+    async Task Repair(Store db, HistoryScan scan, HistoryGap gap, SungrowMapping mapping, CancellationToken ct)
     {
         if (gap.Kind == "daily")
         {
             var daily = mapping.Daily!;
             if (!gap.Open && !await HistoryReconciliation.DailyCovered(db, gap.PlantId, gap.Start, gap.End, daily, ct))
-                await Storage.UpsertAggregates(db, gap.PlantId,
-                    await provider.ReadAggregates(gap.PlantId, gap.Start, gap.End, ct), ct, fillOnly: true);
+            {
+                var incoming = await provider.ReadAggregates(gap.PlantId, gap.Start, gap.End, ct);
+                await Storage.UpsertAggregates(db, gap.PlantId, incoming, ct, fillOnly: true);
+                if (incoming.Length > 0) scan.LastSuccess = DateTimeOffset.UtcNow;
+            }
             if (await HistoryReconciliation.DailyCovered(db, gap.PlantId, gap.Start, gap.End, daily, ct))
             {
                 db.HistoryGaps.Remove(gap);
@@ -100,6 +103,7 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
                 var incoming = await provider.Read(gap.PlantId, from, to, ct);
                 if (incoming.Any(r => r.Start < from || r.End > to)) throw new ProviderFailure("window", false);
                 await Storage.Upsert(db, gap.PlantId, HistoryReconciliation.Merge(rows, incoming, mapping), ct);
+                if (incoming.Length > 0) scan.LastSuccess = DateTimeOffset.UtcNow;
             }
             if (missing.Length == 0 || HistoryReconciliation.Missing(
                 await HistoryReconciliation.Read(db, gap.PlantId, gap.Start, gap.End, ct),

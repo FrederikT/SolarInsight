@@ -93,6 +93,12 @@ test('A22 Lokale Anmeldung, CSRF, Anlagen- und Tarifpflege', async ({ playwright
     expect((await client.post('/api/v1/auth/login', { data: { password }, headers: { 'X-CSRF': csrf } })).status()).toBe(204)
     expect((await client.get('/api/v1/plant')).status()).toBe(200)
     const headers = { 'X-CSRF': (await (await client.get('/api/v1/auth/session')).json()).csrf }
+    const submittedMapping = await client.put('/api/v1/provider/plant', {
+      headers, data: { plant: '42', mapping: { pv: 83067 } }
+    })
+    expect(submittedMapping.status()).toBe(400)
+    const liveMappingWrite = await client.put('/api/v1/live/mapping', { headers, data: { pv: 13003 } })
+    expect([404, 405]).toContain(liveMappingWrite.status())
     const plant = await client.put('/api/v1/settings/plant', { headers, data: { name: 'Backupfixture',
       zone: 'Europe/Berlin', since: '2026-01-01', pvKwp: 12, battery: null,
       rule: { kw: .1, socTolerance: .02, minutes: 15 } } })

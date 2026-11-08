@@ -1,7 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SolarInsight.Domain;
 using SolarInsight.Infrastructure;
@@ -54,44 +53,17 @@ public static class LiveEndpoints
                 .Select(d => new { key = d.ProviderId, d.Model, d.Type }).ToArrayAsync(ct);
             return new { mapping = await LiveMonitor.Mapping(db, plant.Id, ct), devices };
         });
-        api.MapPost("/live/probe", async (LiveMapping mapping, Queries queries, Store db, LiveProvider provider,
+        api.MapPost("/live/probe", async (Queries queries, Store db, LiveProvider provider,
             RuntimeOptions runtime, CancellationToken ct) =>
         {
             var plant = await queries.Plant(ct);
-            if (!runtime.Demo) await ValidateDevice(db, plant.Id, mapping, ct);
+            var mapping = runtime.Demo ? DemoLive.Mapping : await LiveMonitor.Mapping(db, plant.Id, ct);
+            if (mapping is not { Confirmed: true })
+                return Results.Problem(statusCode: 409, detail: "Für diese Anlage fehlt ein bestätigtes Live-Profil in der Betreiberkonfiguration.");
             var batch = runtime.Demo ? DemoLive.Probe(DateTimeOffset.UtcNow, mapping) :
                 await provider.ReadNow(plant, mapping, ct);
             return Results.Ok(new { batch.MeasuredAt, batch.Values, missing = mapping.Channels.Keys.Except(batch.Values.Keys) });
         }).RequireRateLimiting("login");
-        api.MapPut("/live/mapping", async (LiveMapping mapping, Queries queries, Store db, RuntimeOptions runtime,
-            CancellationToken ct) =>
-        {
-            if (runtime.Demo) return Results.StatusCode(403);
-            var plant = await queries.Plant(ct);
-            await ValidateDevice(db, plant.Id, mapping, ct);
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"""SELECT pg_advisory_xact_lock(hashtextextended({plant.Id.ToString()}, 0))""", ct);
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"""SELECT pg_advisory_xact_lock(hashtextextended({plant.Id.ToString()}, 1))""", ct);
-            var connection = await db.Connections.SingleAsync(c => c.PlantId == plant.Id, ct);
-            var old = JsonSerializer.Deserialize<SungrowMapping>(connection.Capabilities)!;
-            if (old.Live is { } previous &&
-                !mapping.Extends(previous) &&
-                await db.LiveMeasurements.AnyAsync(m => m.PlantId == plant.Id, ct))
-                throw new ArgumentException("Die Zuordnung bereits erfasster Live-Werte erfordert eine Datenmigration.");
-            db.Entry(connection).Property(c => c.Capabilities).CurrentValue = JsonSerializer.Serialize(old with { Live = mapping });
-            await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
-            return Results.NoContent();
-        });
-    }
-
-    static async Task ValidateDevice(Store db, Guid plant, LiveMapping mapping, CancellationToken ct)
-    {
-        mapping.Validate();
-        if (!await db.Devices.AnyAsync(d => d.PlantId == plant && d.ProviderId == mapping.DeviceKey, ct))
-            throw new ArgumentException("Das Live-Gerät gehört nicht zur aktiven Anlage.");
     }
 
     public static DaySample[] Combine(Reading[] history, LiveMeasurement[] moments)

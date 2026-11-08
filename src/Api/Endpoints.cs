@@ -29,7 +29,7 @@ public static class Endpoints
                 capabilities = new { energy = plant.Synthetic || mapped, timeseries = plant.Synthetic || mapping?.Points.Length > 0,
                     events = plant.Synthetic || mapping?.Grid is not null,
                     simulation = plant.Synthetic || mapping is { Pv: not null, Load: not null, ConfirmedAcPaths: true } },
-                providerStatus = plant.Synthetic ? "Synthetische Demodaten" : mapped ? "Sungrow-Messpunktzuordnung manuell bestätigt" : "Sungrow-Verbindung ausstehend" };
+                providerStatus = plant.Synthetic ? "Synthetische Demodaten" : mapped ? "Sungrow-Anlage zugeordnet" : "Sungrow-Verbindung ausstehend" };
         });
         api.MapGet("/energy-insights", async ([AsParameters] ViewPeriod query, int? hour, int? mix, int? offset,
             Queries q, CancellationToken ct) =>
@@ -116,12 +116,21 @@ public static class Endpoints
         api.MapGet("/data-status", async ([AsParameters] ViewPeriod query, Queries q, Store db, LiveProvider live, SyntheticProvider synthetic, CancellationToken ct) =>
         {
             var view = await Read(q, query, ct);
-            var latest = await db.Readings.Where(r => r.PlantId == view.Plant.Id).MaxAsync(r => (DateTimeOffset?)r.End, ct);
+            var latestMinute = await db.Readings.Where(r => r.PlantId == view.Plant.Id).MaxAsync(r => (DateTimeOffset?)r.End, ct);
+            var latestDaily = await db.Aggregates.Where(a => a.PlantId == view.Plant.Id && a.Origin == "provider")
+                .MaxAsync(a => (DateTimeOffset?)a.End, ct);
+            var latest = new[] { latestMinute, latestDaily }.Max();
             var job = await db.Imports.AsNoTracking().Where(j => j.PlantId == view.Plant.Id)
                 .OrderByDescending(j => j.Status == "pending" || j.Status == "running")
                 .ThenByDescending(j => j.Cancelled ?? j.LastAttempt ?? j.Start).FirstOrDefaultAsync(ct);
             var progress = job is null ? null : ImportProgress.Describe(job,
                 view.Plant.Synthetic ? synthetic.Window : live.Window, DateTimeOffset.UtcNow);
+            var lastImport = await db.Imports.Where(j => j.PlantId == view.Plant.Id).MaxAsync(j => j.LastSuccess, ct);
+            var lastRepair = await db.HistoryScans.Where(s => s.PlantId == view.Plant.Id)
+                .Select(s => s.LastSuccess).SingleOrDefaultAsync(ct);
+            var lastLive = await db.LivePolls.Where(p => p.PlantId == view.Plant.Id &&
+                (p.Quality == "confirmed" || p.Quality == "repeated")).MaxAsync(p => (DateTimeOffset?)p.FetchedAt, ct);
+            var lastSuccess = new[] { lastImport, lastRepair, lastLive }.Max();
             var gaps = new List<object>();
             var cursor = Calendar.Utc(view.Period.Start, view.Zone);
             foreach (var row in view.Rows.Where(r => r.Pv.HasValue && r.Load.HasValue))
@@ -136,7 +145,7 @@ public static class Endpoints
                 g.Start < end && g.End > periodStart)
                 .OrderByDescending(g => g.Open).ThenBy(g => g.Start)
                 .Select(g => new { g.Start, g.End, g.Kind, g.Attempts, g.Due, g.Open, g.Error }).Take(100).ToArrayAsync(ct);
-            return new { report = view.Report(), latest, job, progress, gaps, repair, provider = view.Plant.Synthetic ?
+            return new { report = view.Report(), latest, lastSuccess, job, progress, gaps, repair, provider = view.Plant.Synthetic ?
                 "Synthetische Demodaten" : view.Plant.ProviderId is null ? "Sungrow-Freigabe und Messpunktvalidierung ausstehend" : "Sungrow-Leseimport" };
         });
         api.MapGet("/settings/plant", async (Queries q, Store db, CancellationToken ct) =>
@@ -161,8 +170,13 @@ public static class Endpoints
             Validate(input.Rule);
             var current = await q.Plant(ct);
             await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT pg_advisory_xact_lock(hashtextextended({current.Id.ToString()}, 0))""", ct);
             var plant = await LockPlant(db, current.Id, ct);
             plant.Name = input.Name.Trim();
+            if (plant.ProviderId is not null && plant.Zone != input.Zone &&
+                await db.Imports.AnyAsync(j => j.PlantId == plant.Id && (j.Status == "pending" || j.Status == "running"), ct))
+                throw new ArgumentException("Die Anlagenzeitzone kann nach Abschluss des laufenden Imports geändert werden.");
             if (plant.ProviderId is not null && plant.Zone != input.Zone &&
                 (await db.Readings.AnyAsync(r => r.PlantId == plant.Id, ct) ||
                  await db.LiveMeasurements.AnyAsync(r => r.PlantId == plant.Id, ct) ||
@@ -273,7 +287,7 @@ public static class Endpoints
             throw new ArgumentException("Ungültige Ereignisschwellen.");
     }
 
-    static async Task<Plant> LockPlant(Store db, Guid id, CancellationToken ct) =>
+    internal static async Task<Plant> LockPlant(Store db, Guid id, CancellationToken ct) =>
         (await db.Plants.FromSqlInterpolated($"""SELECT * FROM "Plants" WHERE "Id" = {id} FOR UPDATE""")
             .ToListAsync(ct)).Single();
 
