@@ -30,7 +30,7 @@ Nach erfolgreicher Autorisierung und bestätigter Anlagenzuordnung den initialen
 
 ## CI-01 · Fehlgeschlagene GitHub-Actions-Pipeline beheben
 
-**Status:** Lokal korrigiert und geprüft. Alle 10 Linux-Playwright-Tests und der PostgreSQL-Restore bestanden. Der letzte GitHub-Lauf scheiterte vor dieser Korrektur am mobilen Layout. Die GitHub-Abnahme wartet auf einen Lauf mit dem Fix. [Nachweis CI-01](implementation-status.md#ci-01--pipeline).
+**Status:** Erledigt. GitHub Actions hat den korrigierten Anwendungsstand einschließlich Browser- und Restore-Prüfung bestätigt. [Nachweis CI-01](implementation-status.md#ci-01--pipeline).
 
 Die fehlgeschlagenen GitHub-Actions-Läufe und Jobprotokolle prüfen, bestätigte Ursachen beheben und den vollständigen Lauf mit der Korrektur verifizieren.
 
@@ -86,7 +86,7 @@ Bei den historischen Energiebilanzen den ausgewählten Zeitraum nennen und drei 
 
 ## LIVE-01 · Messalter und Aktualisierung bei sichtbarer Übersicht prüfen
 
-**Status:** Anzeige und Cache-Verhalten geprüft. Die private Instanz bestätigt den Zehn-Minuten-Takt im Hintergrund. Der genaue Grund für den früheren Sprung bleibt offen, weil der damalige Sichtbarkeitsstatus nicht aufgezeichnet wurde. [Nachweis](implementation-status.md#live-01--sichtbarkeit-und-abrufzeiten).
+**Status:** Erledigt und lokal geprüft. Zwischen den Quellmessungen 09:15 und 09:25 lagen zwei erfolgreiche Abrufe im Abstand von rund fünf Minuten. [Nachweis](implementation-status.md#live-01--sichtbarkeit-und-abrufzeiten).
 
 Der sichtbare Browser liest den lokalen Cache alle 30 Sekunden. Der direkte Sungrow-Abruf hat im aktuellen Adapter eine Untergrenze von fünf Minuten. Im Hintergrund beträgt der Standard zehn Minuten. Die beobachtete Folge 09:15 → 09:25 reicht allein nicht aus, um einen Fehler im Sichtbarkeitssignal festzustellen. Sichtbarkeit, letzter Abruf, Zeitpunkt der Quellmessung und etwaige Wartezeiten getrennt prüfen und verständlich anzeigen. Einen minutenaktuellen Quellwert nur zusagen, wenn der Providervertrag oder eine dafür geeignete Quelle ihn tatsächlich ermöglicht.
 

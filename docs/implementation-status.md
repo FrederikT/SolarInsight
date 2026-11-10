@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-03 umgesetzt und lokal mit synthetischen Daten oder Provider-Fixtures geprüft. CI-01 wartet auf die GitHub-Abnahme des Layoutfixes. |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | Entscheidung des Eigentümers offen. |
 
 ## Umsetzungsliste
@@ -136,7 +136,9 @@ Im lokalen Linux-Chromium lässt sich der Überlauf mit 125 % Schriftgröße rep
 
 Am 10. November 2026 wurden die [lokale Demo](http://127.0.0.1:8080) per Docker Compose und die [private Instanz](http://127.0.0.1:8081) per .NET Release-Publish neu gebaut und gestartet. Beide behalten ihre Datenbank und Konfiguration, melden `ready` und liefern dieselbe korrigierte CSS-Datei aus. TypeScript, ESLint und Vite-Build liefen erfolgreich durch.
 
-Alle 10 Playwright-Tests liefen mit Linux-Chromium 1.58.2 gegen die lokale Demo und eine isolierte private Compose-Testinstanz durch. Der Restore der privaten Testdatenbank in eine leere PostgreSQL-Datenbank ergab die erwartete Anlage und einen Tarif. Der Layoutfix liegt lokal vor. Ein GitHub-Lauf mit diesem Fix steht noch aus.
+Alle 10 Playwright-Tests liefen bei der ursprünglichen lokalen Layoutprüfung mit Linux-Chromium gegen die Demo und eine isolierte private Compose-Testinstanz durch. Der Restore der privaten Testdatenbank in eine leere PostgreSQL-Datenbank ergab die erwartete Anlage und einen Tarif.
+
+[GitHub Actions, Lauf 42785223950](https://github.com/FrederikT/SolarInsight/actions/runs/42785223950) bestätigte den Anwendungsstand `7793acc`. Der Job `verify` bestand Backend, PostgreSQL, Frontend, frischen Compose-Start, Browser- und Zugriffstests sowie Neustart und Restore.
 
 ## Übersicht und Datenprüfung vom 10. November 2026
 
@@ -144,7 +146,7 @@ Alle 10 Playwright-Tests liefen mit Linux-Chromium 1.58.2 gegen die lokale Demo 
 
 Die Übersicht trennt gemeinsame Tages- und Minutenabdeckung. Unter dem Info-Symbol stehen die Erläuterungen zu Quellen und Näherungen. Bei vollständigen Tageswerten für PV und Verbrauch benennt der Hinweis konkret die unvollständige Minutenreihe. Fehlende Eingangsgrößen, zu wenige Daten und fehlende Bestätigung von Energiepfaden werden bei den Quoten unterschieden, soweit sich der Grund aus dem Bericht ableiten lässt. Berechenbare Quoten aus unvollständigen Intervallreihen werden als vorläufig markiert. Live-Stichproben werden weiterhin nicht als Energiedaten für die Tagesquote verwendet.
 
-Einzelne Tage zeigen im Zeitverlauf kW und SOC in Prozent. Der Verlauf benennt fehlende Reihen. Die Heatmap zeigt einen Leerzustand für den gewählten Kanal und behandelt gemessene Nullwerte als Werte. Auf dem Desktop wurde die Maximalbreite angehoben. Die Kennzahlen des gewählten Zeitraums stehen vor der kompakten Live-Anzeige. Das Diagramm für den laufenden Tag wird erst nach dem Aufklappen geladen.
+Einzelne Tage zeigen im Zeitverlauf kW und SOC in Prozent. Der Verlauf benennt fehlende Reihen. Die Heatmap zeigt einen Leerzustand für den gewählten Kanal und behandelt gemessene Nullwerte als Werte. Auf dem Desktop wurde die Maximalbreite angehoben. Das Diagramm für den laufenden Tag wird erst nach dem Aufklappen geladen.
 
 ### DATA-01 · Lokaler November-Bestand
 
@@ -176,7 +178,7 @@ Die Browser-Fixture mit 96 Lastintervallen zeigt 100 % Tagesabdeckung, 0 von 24 
 
 Der Browser-Test übernimmt neue Cache-Daten nach 30 Sekunden bei sichtbarem Tab, meldet einen ausgeblendeten Tab und pausiert dessen Refresh. Ein Backend-Test prüft das Auslaufen eines fehlenden Sichtbarkeitssignals. Die Diagnose zeigt Abrufmodus, Quellmessung, letzten Abrufversuch und frühesten nächsten Versuch getrennt. Wiederholte Quellzeitstempel und Abrufwartezeit sind sichtbar.
 
-Die private Instanz meldete im Hintergrund 600 Sekunden als frühesten nächsten Cloud-Abruf und in derselben Stichprobe rund eine Minute Differenz zwischen Quellmessung und Abruf. Der Zehn-Minuten-Sprung ist damit im Hintergrund möglich. Der historische Sprung lässt sich ohne damaligen Sichtbarkeitsstatus nicht eindeutig zuordnen.
+Die private Instanz meldete im Hintergrund 600 Sekunden als frühesten nächsten Cloud-Abruf. Der gespeicherte Verlauf vom 10. November zeigt für den beobachteten Sprung zwei erfolgreiche Abrufe um 09:20:49 und 09:25:54 Uhr in Europe/Berlin. Die zugehörigen Quellmessungen stammen von 09:15 und 09:25 Uhr. Beide Abrufe hatten keine Wiederholungswartezeit. Der Zehn-Minuten-Sprung lag im Quellzeitstempel. Zwischen den Abrufen lagen rund fünf Minuten.
 
 ### Lokale Bereitstellung
 
