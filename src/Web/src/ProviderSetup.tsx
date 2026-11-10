@@ -11,6 +11,7 @@ type Channel = typeof points[number][0]
 type PointIds = Record<Channel, number | null>
 type PointSemantics = { positiveGridIsImport: boolean; positiveBatteryIsCharge: boolean; socPercent: boolean }
 type Mapping = PointIds & PointSemantics & { stepMinutes: number; instantaneous: boolean; endStamped: boolean; confirmedAcPaths: boolean;
+  deviceCounters?: boolean; live?: { deviceKey: string; confirmed: boolean } | null;
   daily: Record<typeof dailyPoints[number][0], number | null> | null }
 export type ProviderStatus = { configured: boolean; authorized: boolean; defaultZone: string;
   activeMapping: { id: string; name: string; zone: string; mapping: Mapping } | null }
@@ -112,9 +113,91 @@ export function ProviderSetup({ changed }: { changed: () => void }) {
       <PointList rows={points.map(([key, label]) => [label, active.mapping[key]])} missing="Kein bestätigter Minutenmesspunkt für diese Anlage." />
       <h3>Tageswerte</h3>
       <PointList rows={dailyPoints.map(([key, label]) => [label, active.mapping.daily?.[key]])} missing="Kein Tagesmesspunkt im Anlagenprofil." />
-      <HistoricalProbe />
-      <LiveDiagnostics key={active.id + JSON.stringify(active.mapping)} zone={active.zone} />
+      <HistoricalProbe zone={active.zone} />
+      {active.mapping.deviceCounters && active.mapping.live?.confirmed &&
+        <CounterBackfill key={active.id} device={active.mapping.live.deviceKey} step={active.mapping.stepMinutes} />}
+      <LiveDiagnostics key={active.id + JSON.stringify(active.mapping)} zone={active.zone} showCandidates />
     </details>}
+  </>
+}
+
+type ProbeResult = {
+  source: string; fetchedAt: string; failure?: string; httpStatus?: number; resultCode?: string; retryAfterSeconds?: number;
+  points: { point: number; channel: string; unit: string | null; delivered: boolean; validCount: number; status: string;
+    values: { measuredAt: string | null; value: number }[] }[];
+}
+
+const probeStatuses: Record<string, string> = {
+  available: 'Geliefert', missing: 'Fehlt · Ursache ungeklärt', 'unknown-unit': 'Einheit fehlt oder ist unbekannt',
+  'invalid-value': 'Kein numerischer Wert', 'invalid-time': 'Messzeit fehlt oder ist ungültig', 'not-evaluated': 'Nicht geprüft',
+}
+
+function probeInput(form: HTMLFormElement) {
+  const data = new FormData(form)
+  for (const key of ['start', 'end']) {
+    const value = data.get(key)
+    if (typeof value === 'string' && value.length === 5) data.set(key, value + ':00')
+  }
+  return Object.fromEntries(data)
+}
+
+type ProbeDevice = { key: string; model: string; type: string; candidateProbeSupported: boolean }
+
+function CandidateProbe({ zone, devices }: { zone: string; devices: ProbeDevice[] }) {
+  const [result, setResult] = useState<ProbeResult>()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [historical, setHistorical] = useState(false)
+  const [step, setStep] = useState(15)
+  const supported = devices.filter(device => device.candidateProbeSupported)
+  return <form onSubmit={async event => {
+    event.preventDefault()
+    const input = probeInput(event.currentTarget)
+    setBusy(true); setError(''); setResult(undefined)
+    try { setResult(await request(historical ? '/provider/probe/device-minutes' : '/provider/probe/live-candidates', 'POST',
+      historical && step !== 15 ? { ...input, stepMinutes: step } : input)) }
+    catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }}>
+    <h3>Gerätemesspunkte lesend prüfen</h3>
+    <p>Die Rohwerte behalten Einheit und Vorzeichen der Quelle. Messort und SOC-Skalierung mit iSolarCloud abgleichen.</p>
+    {!supported.length && <p>Für die gefundenen Geräte ist kein Kandidatenkatalog verfügbar.</p>}
+    {!!supported.length && <>
+      <label>Quelle<select value={historical ? 'history' : 'live'} disabled={busy}
+        onChange={event => { setHistorical(event.target.value === 'history'); setResult(undefined); setError('') }}>
+        <option value="live">Live-Kandidaten</option><option value="history">Gerätehistorie (15 Minuten)</option>
+      </select></label>
+      <label>Hybridwechselrichter<select name="device" required disabled={busy}
+        onChange={() => { setResult(undefined); setError('') }}>
+        {supported.map(device => <option key={device.key} value={device.key}>{device.type} · {device.model} · {device.key}</option>)}
+      </select></label>
+      {historical && <><label>Messraster<select value={step} disabled={busy}
+        onChange={event => { setStep(Number(event.target.value)); setResult(undefined) }}>
+        <option value={15}>15 Minuten</option><option value={5}>5 Minuten</option>
+      </select></label><ProbeWindow step={step} /></>}
+      <button className="secondary" disabled={busy}>Gerätemesspunkte abrufen</button>
+    </>}
+    {busy && <Status text="Geräteprobe läuft …" />}
+    {error && <Status error={error} />}
+    {result && <ProbeReport result={result} zone={zone} />}
+  </form>
+}
+
+function ProbeReport({ result, zone }: { result: ProbeResult; zone: string }) {
+  const failure = result.failure === 'authorization' ? 'Sungrow hat den Lesezugriff nicht autorisiert.' :
+    result.failure === 'rate-limit' ? 'Abrufgrenze erreicht. Später erneut versuchen.' : result.failure
+  return <>
+    <p>{result.source} · {result.failure ? 'Prüfversuch' : 'Abgerufen'} {stamp(result.fetchedAt, zone)}</p>
+    {failure && <Status error={[failure, result.httpStatus && 'HTTP ' + result.httpStatus,
+      result.resultCode && 'Sungrow-Code ' + result.resultCode,
+      result.retryAfterSeconds && 'Wartezeit ' + result.retryAfterSeconds + ' s'].filter(Boolean).join(' · ')} />}
+    <ul>{result.points.map(point => <li key={point.point}>
+      <strong>{point.channel} · {point.point}</strong> · {probeStatuses[point.status]} · {point.validCount} gültige Werte
+      {point.delivered && ' · ' + (point.unit || 'Einheit unbekannt')}
+      {!!point.values.length && <ul>{point.values.map((sample, index) => <li key={index}>
+        {sample.measuredAt ? stamp(sample.measuredAt, zone) : 'Messzeit unbekannt'} · {sample.value} {point.unit}
+      </li>)}</ul>}
+    </li>)}</ul>
   </>
 }
 
@@ -133,32 +216,83 @@ function Semantics({ mapping }: { mapping: PointIds & PointSemantics & { gridExp
   return rules.length ? <p>{rules.join(' · ')}</p> : null
 }
 
-function HistoricalProbe() {
-  const [result, setResult] = useState<{ minutes: { point: number; samples: number }[]; days: { point: number; samples: number }[] }>()
+function ProbeWindow({ step = 15 }: { step?: number }) {
+  return <>
+    <label>Abgeschlossener Tag<input type="date" name="day" required /></label>
+    <label>Von (Anlagenzeit)<input type="time" name="start" defaultValue="11:00" step={step * 60} required /></label>
+    <label>Bis (Anlagenzeit, 00:00 für Tagesende)<input type="time" name="end" defaultValue="13:00" step={step * 60} required /></label>
+  </>
+}
+
+function CounterBackfill({ device, step }: { device: string; step: number }) {
+  type Result = { candidates?: unknown[]; written?: number; inconsistent?: string[]; failure?: string }
+  const [preview, setPreview] = useState<{ input: ReturnType<typeof probeInput>; count: number }>()
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  async function run(input: ReturnType<typeof probeInput>, apply: boolean) {
+    setBusy(true); setPreview(undefined); setError(''); setMessage('')
+    try {
+      const result = await request<Result>('/provider/device-counters/backfill' + (apply ? '?apply=true' : ''), 'POST',
+        { ...input, device, stepMinutes: step })
+      if (result.failure) throw new Error('Sungrow-Abruf fehlgeschlagen: ' + result.failure)
+      if (result.inconsistent?.length && result.candidates?.length)
+        throw new Error('Tagesabgleich für dieses Fenster fehlgeschlagen. Der Nachimport ist gesperrt.')
+      const count = result.candidates?.length ?? 0
+      if (apply) setMessage(`${result.written ?? 0} Intervalle neu gespeichert oder aktualisiert.`)
+      else if (count) setPreview({ input, count })
+      else setMessage('Sungrow hat für dieses Fenster keine importierbaren Zählerintervalle geliefert.')
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }
+  return <form onChange={() => setPreview(undefined)} onSubmit={event => {
+    event.preventDefault()
+    void run(probeInput(event.currentTarget), false)
+  }}>
+    <h3>Zählerdaten nachladen</h3>
+    <p>Ein Fenster bis drei Stunden wählen. Solar Insight übernimmt geprüfte Zählerdifferenzen zwischen benachbarten Messpunkten. Fehlende Messintervalle bleiben sichtbar.</p>
+    <fieldset disabled={busy}><ProbeWindow step={step} />
+      <button className="secondary">Nachimport prüfen</button>
+    </fieldset>
+    {busy && <Status text="Sungrow-Daten werden geprüft …" />}
+    {preview && <><p>{preview.count} Intervalle im gewählten Fenster sind importierbar.</p>
+      <button type="button" onClick={() => void run(preview.input, true)}>Zählerintervalle übernehmen</button></>}
+    {error && <Status error={error} />}
+    {message && <Status text={message} />}
+  </form>
+}
+
+function HistoricalProbe({ zone }: { zone: string }) {
+  const [result, setResult] = useState<{ minuteReport?: ProbeResult; days: { point: number; samples: number }[];
+    normalizedDays?: { point: number; kwh: number }[] }>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   return <form onSubmit={async e => {
     e.preventDefault()
-    const day = new FormData(e.currentTarget).get('day')
+    const input = probeInput(e.currentTarget)
     setBusy(true); setError(''); setResult(undefined)
-    try { setResult(await request('/provider/probe', 'POST', { day })) }
+    try { setResult(await request('/provider/probe', 'POST', input)) }
     catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
   }}>
-    <h3>Historische Messpunkte prüfen</h3>
-    <label>Abgeschlossener Tag mit PV-Erzeugung<input type="date" name="day" required /></label>
+    <h3>Historische Anlagenmesspunkte prüfen</h3>
+    <ProbeWindow />
     <button className="secondary" disabled={busy}>Messpunkte prüfen</button>
     {busy && <Status text="Historische Probe läuft …" />}
     {error && <Status error={error} />}
-    {result && <ul>{([['minutes', '15 Minuten'], ['days', 'Tageswerte']] as const).map(([key, label]) =>
-      <li key={key}>{label} · {result[key].map(p => p.point + ': ' + p.samples + ' Werte').join(' · ')}</li>)}</ul>}
+    {result?.minuteReport && <ProbeReport result={result.minuteReport} zone={zone} />}
+    {result && <ul>{result.days.map(point => {
+      const value = result.normalizedDays?.find(row => row.point === point.point)?.kwh
+      return <li key={point.point}>Tagespunkt {point.point} · {value == null ? point.samples + ' Rohwerte' : number(value) + ' kWh'}</li>
+    })}</ul>}
   </form>
 }
 
-export function LiveDiagnostics({ zone }: { zone: string }) {
+export function LiveDiagnostics({ zone, showCandidates = false }: { zone: string; showCandidates?: boolean }) {
   const data = useData<{ mapping: (PointIds & PointSemantics & { deviceKey: string; confirmed: boolean;
-    gridExport?: number | null; batteryDischarge?: number | null; batteryExportExcluded: boolean }) | null;
-    devices: { key: string; model: string; type: string }[] }>('/live/mapping')
+    gridExport?: number | null; batteryDischarge?: number | null; batteryExportExcluded: boolean;
+    pvDc?: number | null; inverterActive?: number | null }) | null;
+    devices: ProbeDevice[] }>('/live/mapping')
   const [probe, setProbe] = useState<{ measuredAt: string | null; values: Partial<Record<Channel, number>>; missing: Channel[] }>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -171,6 +305,8 @@ export function LiveDiagnostics({ zone }: { zone: string }) {
     <PointList rows={points.map(([key, label]) => [label, mapping?.confirmed ? mapping[key] : null])}
       missing="Kein bestätigter Live-Messpunkt für diese Anlage." />
     {mapping?.confirmed && <>
+      <PointList rows={[['PV-DC-Leistung am Wechselrichter', mapping.pvDc],
+        ['Wechselrichter-Wirkleistung', mapping.inverterActive]]} missing="Kein bestätigter Gerätemesspunkt." />
       <Semantics mapping={mapping} />
       <p>{mapping.batteryExportExcluded ? 'Batterieexport ausgeschlossen' : 'Batterieexport kann auftreten'}</p>
     </>}
@@ -188,5 +324,6 @@ export function LiveDiagnostics({ zone }: { zone: string }) {
     {!!probe?.missing.length && <Status text={'Keine verwertbare Messung für ' +
       points.filter(([key]) => probe.missing.includes(key)).map(([, label]) => label).join(', ') + '.'} />}
     {error && <Status error={error} />}
+    {showCandidates && <CandidateProbe zone={zone} devices={devices} />}
   </>
 }

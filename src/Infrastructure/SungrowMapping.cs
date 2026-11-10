@@ -6,7 +6,7 @@ namespace SolarInsight.Infrastructure;
 
 public record SungrowMapping(int? Pv, int? Load, int? Grid, int? Battery, int? Soc, bool PositiveGridIsImport,
     bool PositiveBatteryIsCharge, bool Instantaneous, bool EndStamped, bool SocPercent, bool ConfirmedAcPaths,
-    AggregateMapping? Daily = null, int StepMinutes = 5, LiveMapping? Live = null)
+    AggregateMapping? Daily = null, int StepMinutes = 5, LiveMapping? Live = null, bool DeviceCounters = false)
 {
     public int[] Points => new int?[] { Pv, Load, Grid, Battery, Soc }.OfType<int>().ToArray();
 

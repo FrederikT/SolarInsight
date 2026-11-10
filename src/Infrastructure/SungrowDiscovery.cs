@@ -15,6 +15,7 @@ public sealed class SungrowDiscovery(HttpClient http)
     public const string TokenPath = "openapi/apiManage/token";
     public const string RefreshPath = "openapi/apiManage/refreshToken";
     public const string MinutesPath = "openapi/platform/getPowerStationPointMinuteDataList";
+    public const string DeviceMinutesPath = "openapi/platform/getDevicePointMinuteDataList";
 
     public static bool IsAllowedRedirect(Uri uri) => uri.IsAbsoluteUri &&
         uri.UserInfo.Length == 0 && uri.Fragment.Length == 0 &&
@@ -43,17 +44,20 @@ public sealed class SungrowDiscovery(HttpClient http)
             new { appkey = appKey, ps_id = plant, page, size = 10 }, ct);
 
     public Task<JsonElement> DeviceNow(string appKey, string accessKey, string token, LiveMapping mapping,
-        CancellationToken ct)
+        CancellationToken ct) => DeviceNow(appKey, accessKey, token, mapping.DeviceKey, mapping.Points, ct);
+
+    public Task<JsonElement> DeviceNow(string appKey, string accessKey, string token, string deviceKey,
+        IEnumerable<int> points, CancellationToken ct)
     {
-        var keyParts = mapping.DeviceKey.Split('_');
+        var keyParts = deviceKey.Split('_');
         if (keyParts.Length < 2 || !int.TryParse(keyParts[1], NumberStyles.None, CultureInfo.InvariantCulture, out int deviceType) ||
             deviceType <= 0)
             throw new ArgumentException("Der Sungrow-Geräteschlüssel enthält keinen gültigen Gerätetyp.");
         return Post("openapi/platform/getDeviceRealTimeData", accessKey, token, new
         {
-            appkey = appKey, ps_key_list = new[] { mapping.DeviceKey },
+            appkey = appKey, ps_key_list = new[] { deviceKey },
             device_type = deviceType.ToString(CultureInfo.InvariantCulture),
-            point_id_list = mapping.Points.Select(p => p.ToString(CultureInfo.InvariantCulture)).ToArray(),
+            point_id_list = points.Select(p => p.ToString(CultureInfo.InvariantCulture)).ToArray(),
             is_get_point_dict = "1"
         }, ct);
     }
@@ -73,16 +77,32 @@ public sealed class SungrowDiscovery(HttpClient http)
     public Task<JsonElement> Minutes(string appKey, string accessKey, string token, string plant,
         int[] points, DateTimeOffset start, DateTimeOffset end, TimeZoneInfo zone, CancellationToken ct, int stepMinutes = 5)
     {
+        var (first, last, step) = MinuteWindow(start, end, zone, stepMinutes);
+        return Post(MinutesPath, accessKey, token, new { appkey = appKey, ps_id_list = new[] { plant },
+            points = Points(points), start_time_stamp = first, end_time_stamp = last, minute_interval = step,
+            is_get_point_dict = "1" }, ct);
+    }
+
+    public Task<JsonElement> DeviceMinutes(string appKey, string accessKey, string token, string device,
+        int[] points, DateTimeOffset start, DateTimeOffset end, TimeZoneInfo zone, CancellationToken ct, int stepMinutes)
+    {
+        var (first, last, step) = MinuteWindow(start, end, zone, stepMinutes);
+        return Post(DeviceMinutesPath, accessKey, token, new { appkey = appKey, ps_key_list = new[] { device },
+            points = Points(points), start_time_stamp = first, end_time_stamp = last, minute_interval = step,
+            is_get_point_dict = "1" }, ct);
+    }
+
+    static (string First, string Last, string Step) MinuteWindow(DateTimeOffset start, DateTimeOffset end,
+        TimeZoneInfo zone, int stepMinutes)
+    {
         var first = TimeZoneInfo.ConvertTime(start, zone);
         var last = TimeZoneInfo.ConvertTime(end, zone);
         if (stepMinutes is not (5 or 15) || end <= start || end - start > TimeSpan.FromHours(3) || last.DateTime <= first.DateTime ||
             last.DateTime - first.DateTime > TimeSpan.FromHours(3))
             throw new ArgumentException("Ungültiges Abfragefenster für die Sungrow-Minutenhistorie.");
         const string format = "yyyyMMddHHmmss";
-        return Post(MinutesPath, accessKey, token, new { appkey = appKey, ps_id_list = new[] { plant },
-            points = Points(points), start_time_stamp = first.ToString(format, CultureInfo.InvariantCulture),
-            end_time_stamp = last.ToString(format, CultureInfo.InvariantCulture), minute_interval = stepMinutes.ToString(CultureInfo.InvariantCulture),
-            is_get_point_dict = "1" }, ct);
+        return (first.ToString(format, CultureInfo.InvariantCulture), last.ToString(format, CultureInfo.InvariantCulture),
+            stepMinutes.ToString(CultureInfo.InvariantCulture));
     }
 
     static string Points(int[] points)

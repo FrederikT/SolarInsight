@@ -5,10 +5,12 @@ namespace SolarInsight.Infrastructure;
 
 public sealed record LiveMapping(string DeviceKey, int? Pv, int? Load, int? Grid, int? Battery, int? Soc,
     bool PositiveGridIsImport, bool PositiveBatteryIsCharge, bool SocPercent, bool Confirmed,
-    bool BatteryExportExcluded = false, int? GridExport = null, int? BatteryDischarge = null)
+    bool BatteryExportExcluded = false, int? GridExport = null, int? BatteryDischarge = null,
+    int? PvDc = null, int? InverterActive = null)
 {
     public Dictionary<string, int> Channels => new Dictionary<string, int?>
-        { ["pv"] = Pv, ["load"] = Load, ["grid"] = Grid, ["battery"] = Battery, ["soc"] = Soc }
+        { ["pv"] = Pv, ["load"] = Load, ["grid"] = Grid, ["battery"] = Battery, ["soc"] = Soc,
+          ["pvDc"] = PvDc, ["inverterActive"] = InverterActive }
         .Where(pair => pair.Value.HasValue).ToDictionary(pair => pair.Key, pair => pair.Value!.Value);
 
     public IEnumerable<int> Points => Channels.Values.Concat(
@@ -52,27 +54,10 @@ public static class LiveNormalization
     public static LiveBatch Map(JsonElement payload, string plant, LiveMapping mapping, TimeZoneInfo zone, DateTimeOffset now)
     {
         mapping.Validate();
-        if (payload.ValueKind != JsonValueKind.Object ||
-            !payload.TryGetProperty("device_point_list", out var devices) || devices.ValueKind != JsonValueKind.Array)
-            throw new ProviderFailure("provider-payload", false);
-        var matching = devices.EnumerateArray().Select(row =>
-            row.ValueKind == JsonValueKind.Object && row.TryGetProperty("device_point", out var nested) ? nested : row)
-            .Where(row => Field(row, "ps_key") == mapping.DeviceKey && Field(row, "ps_id") == plant).ToArray();
-        if (matching.Length != 1) return LiveBatch.Unknown;
-        var device = matching[0];
-        if (!DateTime.TryParseExact(Field(device, "device_time"), "yyyyMMddHHmmss", CultureInfo.InvariantCulture,
-            DateTimeStyles.None, out var local) || zone.IsInvalidTime(local) || zone.IsAmbiguousTime(local))
-            return LiveBatch.Unknown;
-        var at = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, zone));
-        if (at > now) return LiveBatch.Unknown;
-        var units = new Dictionary<int, string>();
-        if (payload.TryGetProperty("point_dict", out var dictionary) && dictionary.ValueKind == JsonValueKind.Array)
-            foreach (var item in dictionary.EnumerateArray())
-                if (int.TryParse(Field(item, "point_id"), out int id))
-                {
-                    string unit = Field(item, "point_unit");
-                    if (!units.TryAdd(id, unit) && units[id] != unit) units[id] = "";
-                }
+        var device = Device(payload, plant, mapping.DeviceKey);
+        var at = Timestamp(device, "device_time", zone);
+        if (at is null || at > now) return LiveBatch.Unknown;
+        var units = Units(payload);
         decimal? Power(int point, decimal raw) => units.GetValueOrDefault(point) switch
         {
             "W" => raw * .001m,
@@ -92,7 +77,7 @@ public static class LiveNormalization
                 continue;
             }
             var power = Power(point, raw);
-            if (power is null || (channel is "pv" or "load" && power < 0)) continue;
+            if (power is null || (channel is "pv" or "load" or "pvDc" && power < 0)) continue;
             var oppositePoint = channel switch
             {
                 "grid" => mapping.GridExport,
@@ -115,6 +100,39 @@ public static class LiveNormalization
         return new(at, values);
     }
 
-    static string Field(JsonElement row, string key) =>
+    internal static JsonElement Device(JsonElement payload, string plant, string key)
+    {
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("device_point_list", out var devices) || devices.ValueKind != JsonValueKind.Array)
+            throw new ProviderFailure("provider-payload", false);
+        var matching = devices.EnumerateArray().Select(row =>
+            row.ValueKind == JsonValueKind.Object && row.TryGetProperty("device_point", out var nested) ? nested : row)
+            .Where(row => Field(row, "ps_key") == key && Field(row, "ps_id") == plant).Take(2).ToArray();
+        return matching.Length == 1 ? matching[0] : default;
+    }
+
+    internal static DateTimeOffset? Timestamp(JsonElement row, string field, TimeZoneInfo zone)
+    {
+        if (!DateTime.TryParseExact(Field(row, field), "yyyyMMddHHmmss", CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var local) || zone.IsInvalidTime(local) || zone.IsAmbiguousTime(local))
+            return null;
+        return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, zone));
+    }
+
+    internal static Dictionary<int, string> Units(JsonElement payload)
+    {
+        var units = new Dictionary<int, string>();
+        if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("point_dict", out var dictionary) &&
+            dictionary.ValueKind == JsonValueKind.Array)
+            foreach (var item in dictionary.EnumerateArray())
+                if (int.TryParse(Field(item, "point_id").TrimStart('p'), NumberStyles.None, CultureInfo.InvariantCulture, out int id))
+                {
+                    string unit = Field(item, "point_unit");
+                    if (!units.TryAdd(id, unit) && units[id] != unit) units[id] = "";
+                }
+        return units;
+    }
+
+    internal static string Field(JsonElement row, string key) =>
         row.ValueKind == JsonValueKind.Object && row.TryGetProperty(key, out var value) ? value.ToString() : "";
 }

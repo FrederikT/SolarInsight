@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { request, useData } from './api'
 import { Chart, colors, number, Panel, pct, stamp, Status } from './components'
 
-const channels = [['pv', 'PV-Erzeugung'], ['load', 'Hausverbrauch'], ['grid', 'Netz'],
+const channels = [['pv', 'PV-Erzeugung (AC)'], ['load', 'Hausverbrauch'], ['grid', 'Netz'],
   ['battery', 'Batterie'], ['soc', 'Ladezustand']] as const
 type Channel = typeof channels[number][0]
 type Value = { value: number | null; direction: string; measuredAt: string | null; ageSeconds: number | null; quality: string }
 type Now = Record<Channel, Value> & { pvSurplusKw: number | null; flowConfirmed: boolean; quality: string;
+  pvDc?: Value | null; inverterActive?: Value | null;
   fetchedAt?: string | null; timing?: { overviewVisible: boolean; cloudIntervalSeconds: number; sourceMeasuredAt: string | null;
     nextEligibleAt: string | null; retryAt: string | null } }
 type Today = { start: string; end: string; samples: { channel: Channel; at: string; value: number; source: string }[];
@@ -61,7 +62,12 @@ export function LiveView({ zone }: { zone: string }) {
       {!state ? <Status error={now?.error} /> : <>
         {state.quality === 'unconfigured' && <p>Live-Messpunkte können in den Einstellungen geprüft und bestätigt werden.</p>}
         <div className="live-flow" aria-label="Aktuelle Energieflüsse">
-          {channels.map(([key, title]) => <div className={'live-' + key} key={key}>
+          {channels.map(([key, title]) => key === 'pv' && state.pv.quality === 'unconfigured' && state.pvDc ? (
+            <div className="live-pv" key={key}><strong>PV-DC-Leistung am Wechselrichter</strong>
+              <span>{state.pvDc.value == null ? quality[state.pvDc.quality] ?? 'Kein Messwert' : number(state.pvDc.value, 3) + ' kW'}</span>
+              <small>{state.pvDc.measuredAt && <>{stamp(state.pvDc.measuredAt, zone)} · </>}AC-PV-Fluss nicht separat gemessen</small>
+            </div>
+          ) : <div className={'live-' + key} key={key}>
             <strong>{title}</strong><span>{value(key)}</span>
             <small>{state.flowConfirmed && state[key].value !== 0 &&
               (key === 'pv' || key === 'grid' && state.grid.direction === 'import' ||
@@ -72,6 +78,13 @@ export function LiveView({ zone }: { zone: string }) {
                 {state[key].ageSeconds != null && <> · {number(Math.floor(state[key].ageSeconds! / 60))} Min. alt</>}</>}</small>
           </div>)}
         </div>
+        {(state.pvDc || state.inverterActive) && <dl className="facts" aria-label="Weitere Messwerte am Wechselrichter">
+          {([['PV-DC-Leistung am Wechselrichter', state.pv.quality !== 'unconfigured' ? state.pvDc : null],
+            ['Wechselrichter-Wirkleistung', state.inverterActive]] as const)
+            .map(([label, reading]) => reading && <div key={label}><dt>{label}</dt>
+              <dd>{reading.value == null ? quality[reading.quality] ?? 'Kein Messwert' : number(reading.value, 3) + ' kW'}
+                {reading.measuredAt && <> · {stamp(reading.measuredAt, zone)}</>}</dd></div>)}
+        </dl>}
         {state.pvSurplusKw != null && <p>Bestätigter PV-Überschuss {number(state.pvSurplusKw, 3)} kW.</p>}
         {state.timing && <details><summary>Messalter und Abrufstatus</summary>
           <dl className="facts">

@@ -7,10 +7,21 @@ namespace SolarInsight.Api;
 
 public record AuthorizationCode(string Code);
 public record ImportRequest(DateOnly Start, DateOnly End, TimeOnly? StartTime = null, TimeOnly? EndTime = null);
+public record DeviceProbeRequest(string Device);
+public record DeviceHistoryProbeRequest(string Device, DateOnly Day, TimeOnly Start, TimeOnly End, int StepMinutes = 15);
 
 public static class ProviderEndpoints
 {
     internal static readonly TimeSpan MaxTestWindow = TimeSpan.FromHours(6);
+    static readonly ProbePoint[] HybridPoints =
+    [
+        new(13119, "Hausverbrauch", "power"), new(13149, "Netzbezug", "power"),
+        new(13121, "Einspeisung", "power"), new(13126, "Batterieladung", "power"),
+        new(13150, "Batterieentladung", "power"), new(13141, "Ladezustand", "soc"),
+        new(13003, "DC-Gesamtleistung", "power"),
+        new(13011, "Wechselrichter-Wirkleistung (Messort prüfen)", "power")
+    ];
+    static readonly ProbePoint[] HistoryPoints = [.. HybridPoints, .. DeviceCounterHistory.Points];
 
     public static void Map(RouteGroupBuilder api)
     {
@@ -40,7 +51,22 @@ public static class ProviderEndpoints
         provider.MapGet("/plants", async (int? page, LiveProvider live, CancellationToken ct) =>
             await live.Plants(page ?? 1, ct)).RequireRateLimiting("simulate");
         provider.MapPost("/probe", async (ProbeRequest input, LiveProvider live, Queries queries, CancellationToken ct) =>
-            await live.Probe(await queries.Plant(ct), input.Day, ct)).RequireRateLimiting("login");
+            await live.Probe(await queries.Plant(ct), input, ct)).RequireRateLimiting("login");
+        provider.MapPost("/probe/live-candidates", async (DeviceProbeRequest input, LiveProvider live, Queries queries,
+            Store db, CancellationToken ct) =>
+        {
+            var plant = await queries.Plant(ct);
+            await CheckProbeDevice(db, live, plant, input.Device, ct);
+            return Results.Ok(await live.ProbeLive(plant, input.Device, HybridPoints, ct));
+        }).RequireRateLimiting("login");
+        provider.MapPost("/probe/device-minutes", async (DeviceHistoryProbeRequest input, LiveProvider live, Queries queries,
+            Store db, CancellationToken ct) =>
+        {
+            var plant = await queries.Plant(ct);
+            await CheckProbeDevice(db, live, plant, input.Device, ct);
+            return Results.Ok(await live.ProbeDeviceMinutes(plant, input, HistoryPoints, ct));
+        }).RequireRateLimiting("login");
+        provider.MapPost("/device-counters/backfill", BackfillCounters).RequireRateLimiting("login");
         provider.MapPut("/plant", async (LiveActivation input, LiveProvider live, CancellationToken ct) =>
         {
             await live.Activate(input, ct);
@@ -110,6 +136,62 @@ public static class ProviderEndpoints
         });
     }
 
+    static async Task CheckProbeDevice(Store db, LiveProvider live, Plant plant, string device, CancellationToken ct)
+    {
+        if (plant.ProviderId is null || !live.Configured ||
+            !await db.Connections.AnyAsync(c => c.PlantId == plant.Id && c.Status == "mapped", ct) ||
+            !await db.Devices.AnyAsync(d => d.PlantId == plant.Id && d.ProviderId == device, ct))
+            throw new ArgumentException("Ein Gerät der autorisierten Sungrow-Anlage auswählen.");
+        if (!SupportsDeviceProbe(device))
+            throw new ArgumentException("Für diesen Gerätetyp ist kein Kandidatenkatalog hinterlegt.");
+    }
+
+    internal static bool SupportsDeviceProbe(string device) => device.Split('_').ElementAtOrDefault(1) == "14";
+
+    static async Task<IResult> BackfillCounters(DeviceHistoryProbeRequest input, bool? apply, LiveProvider live,
+        Queries queries, Store db, CancellationToken ct)
+    {
+        var plant = await queries.Plant(ct);
+        await CheckProbeDevice(db, live, plant, input.Device, ct);
+        var metadata = await db.Connections.AsNoTracking().SingleAsync(c => c.PlantId == plant.Id, ct);
+        var mapping = JsonSerializer.Deserialize<SungrowMapping>(metadata.Capabilities);
+        if (mapping is not { DeviceCounters: true, Live: { Confirmed: true } configured } ||
+            configured.DeviceKey != input.Device || mapping.StepMinutes != input.StepMinutes)
+            return Results.Problem(statusCode: 409, detail: "Ein bestätigtes Gerätezählerprofil mit passendem Raster ist erforderlich.");
+
+        var report = await live.ProbeDeviceMinutes(plant, input, HistoryPoints, ct);
+        if (report.Failure is not null) return Results.Ok(new { report.Failure, report.HttpStatus, report.ResultCode });
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
+        var (start, end) = LiveProvider.ProbeWindow(input.Day, input.Start, input.End, zone, input.StepMinutes);
+        var candidates = DeviceCounterHistory.Intervals(report, start, end, TimeSpan.FromMinutes(input.StepMinutes));
+        var totals = new Dictionary<string, decimal>
+        {
+            ["pv"] = candidates.Sum(r => r.Pv ?? 0), ["load"] = candidates.Sum(r => r.Load ?? 0),
+            ["import"] = candidates.Sum(r => r.Import ?? 0), ["export"] = candidates.Sum(r => r.Export ?? 0),
+            ["charge"] = candidates.Sum(r => r.Charge ?? 0), ["discharge"] = candidates.Sum(r => r.Discharge ?? 0)
+        };
+        var day = Calendar.Utc(input.Day, zone);
+        var daily = await db.Aggregates.AsNoTracking().Where(a => a.PlantId == plant.Id && a.Start == day &&
+            a.Origin == "provider" && a.Coverage == 1).ToDictionaryAsync(a => a.Point, a => a.Kwh, ct);
+        var inconsistent = totals.Where(pair => !daily.TryGetValue(pair.Key, out var value) || pair.Value > value + .1m)
+            .Select(pair => pair.Key).ToArray();
+        if (apply != true || inconsistent.Length > 0 || candidates.Length == 0)
+            return Results.Ok(new { candidates, totals, inconsistent, written = 0 });
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""SELECT pg_advisory_xact_lock(hashtextextended({plant.Id.ToString()}, 0))""", ct);
+        if (!await db.Connections.AnyAsync(c => c.PlantId == plant.Id && c.Capabilities == metadata.Capabilities, ct) ||
+            await db.Imports.AnyAsync(j => j.PlantId == plant.Id && (j.Status == "pending" || j.Status == "running"), ct))
+            return Results.Problem(statusCode: 409, detail: "Profil geändert oder regulärer Import aktiv.");
+        var existing = await db.Readings.AsNoTracking().Where(r => r.PlantId == plant.Id && r.Start < end && r.End > start)
+            .ToArrayAsync(ct);
+        var rows = DeviceCounterHistory.Merge(existing, candidates);
+        var written = await Storage.Upsert(db, plant.Id, rows, ct);
+        await tx.CommitAsync(ct);
+        return Results.Ok(new { candidates, totals, inconsistent, written });
+    }
+
     public static async Task<bool> Cancel(Store db, Guid plant, Guid id, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
@@ -137,5 +219,5 @@ public static class ProviderEndpoints
     }
 }
 
-public record ProbeRequest(DateOnly Day);
+public record ProbeRequest(DateOnly Day, TimeOnly? Start = null, TimeOnly? End = null);
 

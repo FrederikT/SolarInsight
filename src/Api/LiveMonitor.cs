@@ -36,6 +36,8 @@ public sealed record LiveState(LiveValue Pv, LiveValue Load, LiveValue Grid, Liv
     decimal? PvSurplusKw, bool FlowConfirmed, DateTimeOffset? FetchedAt, string Quality)
 {
     public LiveTiming? Timing { get; init; }
+    public LiveValue? PvDc { get; init; }
+    public LiveValue? InverterActive { get; init; }
 }
 public sealed record LiveTiming(bool OverviewVisible, int CloudIntervalSeconds, DateTimeOffset? SourceMeasuredAt,
     DateTimeOffset? NextEligibleAt, DateTimeOffset? RetryAt);
@@ -72,7 +74,11 @@ public static class LiveStateView
             Math.Abs(p + g - l - b) <= Math.Max(.1m, Math.Max(p, l) * .05m);
         return new(pv, load, grid, battery, Channel("soc"),
             flow && grid.Value is < 0 && mapping?.BatteryExportExcluded == true ? -grid.Value : null,
-            flow, poll?.FetchedAt, poll?.Quality ?? (mapping?.Confirmed == true ? "missing" : "unconfigured"));
+            flow, poll?.FetchedAt, poll?.Quality ?? (mapping?.Confirmed == true ? "missing" : "unconfigured"))
+        {
+            PvDc = configured?.ContainsKey("pvDc") == true ? Channel("pvDc") : null,
+            InverterActive = configured?.ContainsKey("inverterActive") == true ? Channel("inverterActive") : null
+        };
     }
 }
 
@@ -156,6 +162,11 @@ public sealed class LiveMonitor(IServiceScopeFactory scopes, LiveProvider provid
             batch = await provider.ReadNow(plant, mapping, ct);
             failures = 0;
             retryAt = default;
+        }
+        catch (ProviderFailure ex) when (ex.Category == "diagnostic-cooldown")
+        {
+            retryAt = DateTimeOffset.UtcNow + ex.RetryAfter.GetValueOrDefault();
+            return;
         }
         catch (Exception ex) when (ex is ProviderFailure or HttpRequestException or TimeoutException)
         {

@@ -48,10 +48,16 @@ public static class LiveEndpoints
             var plant = await queries.Plant(ct);
             if (plant.Synthetic)
                 return new { mapping = (LiveMapping?)DemoLive.Mapping, devices = new[] {
-                    new { key = DemoLive.Mapping.DeviceKey, Model = "Demo-Hybridwechselrichter", Type = "Synthetisch" } } };
+                    new { key = DemoLive.Mapping.DeviceKey, Model = "Demo-Hybridwechselrichter", Type = "Synthetisch",
+                        candidateProbeSupported = false } } };
             var devices = await db.Devices.AsNoTracking().Where(d => d.PlantId == plant.Id)
                 .Select(d => new { key = d.ProviderId, d.Model, d.Type }).ToArrayAsync(ct);
-            return new { mapping = await LiveMonitor.Mapping(db, plant.Id, ct), devices };
+            return new
+            {
+                mapping = await LiveMonitor.Mapping(db, plant.Id, ct),
+                devices = devices.Select(d => new { d.key, d.Model, d.Type,
+                    candidateProbeSupported = ProviderEndpoints.SupportsDeviceProbe(d.key) }).ToArray()
+            };
         });
         api.MapPost("/live/probe", async (Queries queries, Store db, LiveProvider provider,
             RuntimeOptions runtime, CancellationToken ct) =>

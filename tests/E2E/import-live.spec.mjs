@@ -59,6 +59,8 @@ test('overview reads cache and signals visibility for its own tab', async ({ pag
   let gridValue = -1.2
   await page.route('**/api/v1/live/now', route => route.fulfill({ json: {
     pv: { ...missing, quality: 'unconfigured' }, load: missing, battery: missing,
+    pvDc: { ...missing, value: .84, measuredAt: '2026-10-01T12:00:00Z', quality: 'confirmed' },
+    inverterActive: { ...missing, value: -.16, measuredAt: '2026-10-01T12:00:00Z', quality: 'confirmed' },
     soc: { ...missing, value: 0, quality: 'confirmed' }, pvSurplusKw: null, flowConfirmed: false,
     quality: 'repeated', fetchedAt: '2026-10-01T12:05:00Z',
     timing: { overviewVisible: true, cloudIntervalSeconds: 300, sourceMeasuredAt: '2026-10-01T12:00:00Z', nextEligibleAt: null, retryAt: null },
@@ -71,7 +73,9 @@ test('overview reads cache and signals visibility for its own tab', async ({ pag
   await page.goto('/?kind=day&anchor=2026-10-01')
   await expect(page.getByText('1,2 kW', { exact: true })).toBeVisible()
   await expect(page.getByText('Leer · 0 %')).toBeVisible()
-  await expect(page.getByText('Zuordnung ausstehend', { exact: true })).toBeVisible()
+  await expect(page.getByText('PV-DC-Leistung am Wechselrichter', { exact: true })).toBeVisible()
+  await expect(page.getByText('AC-PV-Fluss nicht separat gemessen')).toBeVisible()
+  await expect(page.getByText('Wechselrichter-Wirkleistung', { exact: true })).toBeVisible()
   await page.getByText('Messalter und Abrufstatus', { exact: true }).click()
   await expect(page.getByText(/keinen neueren Messwert/)).toBeVisible()
   gridValue = -1.5
@@ -109,6 +113,59 @@ test('Demo renders the shared live dashboard and synthetic probe', async ({ page
   await page.getByRole('button', { name: 'Live-Probe abrufen' }).click()
   await expect(page.getByText(/PV-Erzeugung .* kW · Hausverbrauch .* kW/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Live-Zuordnung speichern' })).toHaveCount(0)
+})
+
+test('owner can inspect live candidates and a targeted device history window', async ({ page }) => {
+  const device = '42_14_1_1'
+  const time = '2026-11-09T11:00:00Z'
+  await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { authenticated: true, demo: false, csrf: '' } }))
+  await page.route('**/api/v1/provider/status', route => route.fulfill({ json: {
+    configured: true, authorized: true, defaultZone: 'Europe/Berlin',
+    activeMapping: { id: '42', name: 'Testanlage', zone: 'Europe/Berlin',
+      mapping: { deviceCounters: true, stepMinutes: 15, live: { deviceKey: device, confirmed: true } } },
+  } }))
+  await page.route('**/api/v1/live/mapping', route => route.fulfill({
+    json: { mapping: null, devices: [{ key: device, type: 'Speicherwechselrichter', model: 'Testgerät', candidateProbeSupported: true }] },
+  }))
+  await page.route('**/api/v1/provider/probe/live-candidates', route => {
+    expect(route.request().postDataJSON()).toEqual({ device })
+    return route.fulfill({ json: { source: 'Geräte-Livewerte', fetchedAt: time, points: [
+      { point: 13141, channel: 'Ladezustand', unit: '%', delivered: true, validCount: 1, status: 'available',
+        values: [{ measuredAt: time, value: 0 }] },
+      { point: 13003, channel: 'DC-Gesamtleistung', delivered: false, validCount: 0, status: 'missing', values: [] },
+    ] } })
+  })
+  await page.route('**/api/v1/provider/probe/device-minutes', route => {
+    expect(route.request().postDataJSON()).toEqual({ device, day: '2026-11-09', start: '11:00:00', end: '13:00:00' })
+    return route.fulfill({ json: {
+      source: 'Gerätehistorie · 15 Minuten', fetchedAt: time, failure: 'authorization', resultCode: 'E900', points: [],
+    } })
+  })
+  const backfillRequests = []
+  await page.route('**/api/v1/provider/device-counters/backfill*', route => {
+    const apply = new URL(route.request().url()).searchParams.get('apply') === 'true'
+    backfillRequests.push(apply)
+    expect(route.request().postDataJSON()).toEqual({ device, day: '2026-11-09', start: '11:00:00', end: '13:00:00', stepMinutes: 15 })
+    return route.fulfill({ json: { candidates: [{}], written: apply ? 1 : 0 } })
+  })
+  await page.goto('/?page=settings')
+  await page.getByText('Diagnose und Messpunkte', { exact: true }).click()
+  const form = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Gerätemesspunkte lesend prüfen' }) })
+  await form.getByRole('button', { name: 'Gerätemesspunkte abrufen' }).click()
+  await expect(form.getByText(/· 0 %/)).toBeVisible()
+  await expect(form.getByText(/Ursache ungeklärt/)).toBeVisible()
+  await form.getByLabel('Quelle').selectOption('history')
+  await form.getByLabel('Abgeschlossener Tag').fill('2026-11-09')
+  await form.getByRole('button', { name: 'Gerätemesspunkte abrufen' }).click()
+  await expect(form.getByText(/Lesezugriff nicht autorisiert.*E900/)).toBeVisible()
+  const backfill = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Zählerdaten nachladen' }) })
+  await backfill.getByLabel('Abgeschlossener Tag').fill('2026-11-09')
+  await backfill.getByRole('button', { name: 'Nachimport prüfen' }).click()
+  await expect(backfill.getByText(/1 Intervalle im gewählten Fenster/)).toBeVisible()
+  expect(backfillRequests).toEqual([false])
+  await backfill.getByRole('button', { name: 'Zählerintervalle übernehmen' }).click()
+  await expect(backfill.getByText(/1 Intervalle neu gespeichert/)).toBeVisible()
+  expect(backfillRequests).toEqual([false, true])
 })
 
 test('mobile owner setup requires only consent and plant selection', async ({ page }) => {
@@ -186,8 +243,8 @@ test('Sungrow daily totals stay separate from incomplete interval charts', async
   })
   await page.goto('/?kind=day&anchor=2026-11-06')
   const kpis = page.locator('.kpis')
-  await expect(kpis.locator('article').filter({ hasText: 'Gemeinsame Minutenabdeckung' })).toContainText('0 %')
-  await expect(kpis.locator('article').filter({ hasText: 'Gemeinsame Tagesabdeckung' })).toContainText('100 %')
+  await expect(kpis.getByText(/Gemeinsame .*abdeckung/)).toHaveCount(0)
+  await expect(page.getByText('Achtung: Der Zeitverlauf ist unvollständig')).toBeVisible()
   await expect(kpis.locator('article').filter({ hasText: 'Autarkiegrad' })).toContainText('71,1')
   await expect(page.getByText(/Keine Werte im Verlauf für PV-Erzeugung/)).toBeVisible()
   const balance = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Energiebilanz im gewählten Zeitraum' }) })
@@ -200,6 +257,8 @@ test('Sungrow daily totals stay separate from incomplete interval charts', async
   await info.press('Enter')
   await expect(kpis.getByText(/Näherung aus Tageswerten · setzt Betrieb ohne Netzladen voraus/)).toBeVisible()
   await page.getByText('Hinweise zur Datengrundlage').click()
+  await expect(page.getByText(/Gemeinsame Minutenabdeckung: 0 % der Zeit/)).toBeVisible()
+  await expect(page.getByText(/Gemeinsame Tagesabdeckung: 100 % der Tage/)).toBeVisible()
   await expect(page.getByText(/Im Minutenverlauf fehlen gemeinsame Messintervalle/)).toBeVisible()
   const heatmap = page.getByRole('combobox', { name: 'Heatmap', exact: true })
   await heatmap.selectOption('import')
@@ -234,7 +293,7 @@ test('energy indicators wrap at 375 pixels with larger text', async ({ page }) =
   await page.evaluate(() => { document.documentElement.style.fontSize = '125%' })
   const widths = await page.locator('.kpis article').evaluateAll(cards => cards.map(card =>
     card.scrollWidth <= card.clientWidth))
-  expect(widths).toHaveLength(8)
+  expect(widths).toHaveLength(7)
   expect(widths.every(Boolean)).toBe(true)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375)
 })

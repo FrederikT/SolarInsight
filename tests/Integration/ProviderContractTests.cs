@@ -31,6 +31,105 @@ public sealed class ProviderContractTests
     static readonly DateTimeOffset Start = Calendar.Utc(new DateOnly(2026, 1, 1), Zone);
 
     [Fact]
+    public void CounterDeltasRequireAdjacentPlausibleReadingsAndPreserveMeasuredZero()
+    {
+        var step = TimeSpan.FromMinutes(15);
+        var pv = new PointObservation(13134, "PV", "Wh", true, 8, "available",
+            [new(Start, 1000), new(Start + step, 1200), new(Start + step * 2, 1200),
+             new(Start + step * 4, 1400), new(Start + step * 5, 50),
+             new(Start + step * 6, 10500), new(Start + step * 7, 10600)]);
+        var power = new PointObservation(13003, "DC", "W", true, 7, "available",
+            Enumerable.Range(0, 8).Select(i => new ProbeValue(Start + step * i, 400)).ToArray());
+        var report = new PointProbeResult("Gerät", Start.AddDays(1), [pv, power]);
+        var rows = DeviceCounterHistory.Intervals(report, Start, Start + step * 7, step);
+        Assert.Equal(new[] { Start, Start + step, Start + step * 6 }, rows.Select(row => row.Start));
+        Assert.Equal(new decimal?[] { .2m, 0m, .1m }, rows.Select(row => row.Pv));
+        Assert.All(rows, row => Assert.Null(row.Load));
+        var withoutTelemetry = report with { Points = [pv] };
+        Assert.Empty(DeviceCounterHistory.Intervals(withoutTelemetry, Start, Start + step * 7, step));
+    }
+
+    [Fact]
+    public void InverterValuesStaySeparateFromTheAcBalance()
+    {
+        var mapping = new LiveMapping("42_14_1_1", null, null, null, null, null, true, true, false, true,
+            PvDc: 13003, InverterActive: 13011);
+        using var payload = JsonDocument.Parse("""
+            {"device_point_list":[{"ps_id":42,"ps_key":"42_14_1_1","device_time":"20260101000000",
+              "p13003":840,"p13011":-160}],"point_dict":[{"point_id":13003,"point_unit":"W"},
+              {"point_id":13011,"point_unit":"W"}]}
+            """);
+        var batch = LiveNormalization.Map(payload.RootElement, "42", mapping, Zone, Start.AddMinutes(1));
+        Assert.Equal(.84m, batch.Values["pvDc"]);
+        Assert.Equal(-.16m, batch.Values["inverterActive"]);
+        Assert.DoesNotContain("pv", batch.Values.Keys);
+    }
+
+    [Fact]
+    public void CandidateProbeKeepsZeroAndSeparatesMissingUnknownUnitAndDeniedAccess()
+    {
+        ProbePoint[] points = [new(13141, "SOC", "soc"), new(13003, "DC", "power"), new(13011, "AC", "power")];
+        using var payload = JsonDocument.Parse("""
+            {"device_point_list":[{"device_point":{"ps_id":"42","ps_key":"42_14_1_1",
+              "device_time":"20260101000000","p13141":"0","p13003":"1500"}}],
+              "point_dict":[{"point_id":13141,"point_unit":"%"},{"point_id":13003,"point_unit":"?"}]}
+            """);
+        var result = PointProbe.DeviceNow(payload.RootElement, "42", "42_14_1_1", points, Zone, Start.AddMinutes(1));
+        Assert.Equal(Start.AddMinutes(1), result.FetchedAt);
+        Assert.Collection(result.Points, soc =>
+        {
+            Assert.Equal("available", soc.Status);
+            Assert.Equal(1, soc.ValidCount);
+            Assert.Equal(new ProbeValue(Start, 0), Assert.Single(soc.Values));
+        }, dc =>
+        {
+            Assert.Equal("unknown-unit", dc.Status);
+            Assert.Equal(0, dc.ValidCount);
+            Assert.Equal("?", dc.Unit);
+            Assert.Equal(1500, Assert.Single(dc.Values).Value);
+        }, ac =>
+        {
+            Assert.Equal("missing", ac.Status);
+            Assert.False(ac.Delivered);
+        });
+        var denied = PointProbe.Failed(result.Source, points, result.FetchedAt,
+            new ProviderFailure("provider-result", false) { HttpStatus = 200, ResultCode = "E900" });
+        Assert.Equal("authorization", denied.Failure);
+        Assert.Equal("E900", denied.ResultCode);
+        Assert.All(denied.Points, point => Assert.Equal("not-evaluated", point.Status));
+    }
+
+    [Fact]
+    public async Task DeviceHistoryUsesTheDocumentedEuRouteAndOnlyTheRequestedDevice()
+    {
+        const string key = "42_14_1_1";
+        using var http = new HttpClient(new Stub(async request =>
+        {
+            Assert.Equal("https://gateway.isolarcloud.eu/openapi/platform/getDevicePointMinuteDataList",
+                request.RequestUri!.AbsoluteUri);
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            var data = body.RootElement;
+            Assert.Equal(key, data.GetProperty("ps_key_list")[0].GetString());
+            Assert.Equal("p13119", data.GetProperty("points").GetString());
+            Assert.Equal("15", data.GetProperty("minute_interval").GetString());
+            Assert.Equal("20260101000000", data.GetProperty("start_time_stamp").GetString());
+            Assert.Equal("20260101001500", data.GetProperty("end_time_stamp").GetString());
+            return new(HttpStatusCode.OK) { Content = new StringContent("""
+                {"result_code":"1","result_data":{
+                  "42_14_1_1":[{"time_stamp":"20260101000000","p13119":"0"}],
+                  "42_14_1_2":[{"time_stamp":"20260101000000","p13119":"1500"}],
+                  "point_dict":[{"point_id":13119,"point_unit":"W"}]}}
+                """) };
+        }));
+        var end = Start.AddMinutes(15);
+        var payload = await new SungrowDiscovery(http).DeviceMinutes("app", "key", "token", key, [13119],
+            Start, end, Zone, default, 15);
+        var result = PointProbe.Minutes("Gerätehistorie", payload, key, [new(13119, "Last", "power")],
+            Zone, Start, end, end.AddDays(1));
+        Assert.Equal(new ProbeValue(Start, 0), Assert.Single(Assert.Single(result.Points).Values));
+    }
+
+    [Fact]
     public void MinutesDiagnoseMissingPlantSeriesWithoutUsingOtherRows()
     {
         using var json = JsonDocument.Parse("""

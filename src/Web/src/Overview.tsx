@@ -7,7 +7,7 @@ const labels = { pv: 'PV-Erzeugung', load: 'Hausverbrauch', import: 'Netzbezug',
   charge: 'Batterieladung', discharge: 'Batterieentladung', soc: 'Ladezustand', cost: 'Netto-Kosten' }
 type Key = keyof typeof labels
 const energy = ['pv', 'load', 'import', 'export'] as const
-const storage: Key[] = ['charge', 'discharge', 'soc']
+const storage = ['charge', 'discharge', 'soc'] as const
 const keys = [...energy, ...storage]
 
 export function Overview({ query, drill, day, evidence, simulation, version }: {
@@ -83,9 +83,9 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
     dailyMetrics?.retention != null || m.retention != null ? ratioScope('pv', 'export', 'Inkl. Speicherverluste und Bestandsänderung')
       : estimatedRetention != null ? 'Näherung aus Tageswerten · setzt reine PV-Einspeisung voraus' : ratioReason('pv', 'export')],
   ['Netto-Stromkosten', number(cost.net ?? (cost.importCoverage > 0 || cost.exportCoverage > 0 || cost.fixed > 0 ? cost.coveredNet : null)) + ' €',
-    cost.complete ? 'Bezug und Grundpreis abzüglich Erlös' : 'Nur gedeckter Teilbetrag'],
-  ['Gemeinsame Minutenabdeckung', pct(report.resolutionMinutes == null ? 0 : m.coverage), 'PV und Hausverbrauch im selben Intervall'],
-  ...(dailyMetrics ? [['Gemeinsame Tagesabdeckung', pct(dailyMetrics.coverage), 'Sungrow-Tageswerte für PV und Hausverbrauch']] : [])]
+    cost.complete ? 'Bezug und Grundpreis abzüglich Erlös' : 'Nur gedeckter Teilbetrag']]
+  const intervalCoverage = report.resolutionMinutes == null ? 0 : m.coverage
+  const incompleteChannels = keys.filter(key => key === 'soc' ? m.socMean == null : m[key].coverage < .999999)
   const heatPoints = heatmap?.data?.points ?? []
   const hasHeatValues = heatPoints.some(point => (heat === 'import' ? point.import : point.export) != null)
   const missingSeries = seriesKeys.filter(key => !buckets.some(point => point[key] != null))
@@ -94,15 +94,24 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
   return <>
     <div className="section-heading"><div><span className="eyebrow">ENERGIEBILANZ</span><h1>{day ? 'Tagesdetail' : evidence ? 'Ereigniszeitraum' : 'Übersicht'}</h1>
       <p>{bounds(report.period)} · {report.timeZone}</p></div><a className="button secondary" href={base + '/exports/overview?' + query}>CSV exportieren</a></div>
-    {report.warnings.length > 0 && <details className="data-notes"><summary><span aria-hidden="true">ⓘ </span>Hinweise zur Datengrundlage</summary>
-      <ul>{report.warnings.filter(w => !w.startsWith('Teildaten.') || !dailyMetrics || dailyMetrics.coverage < .999999)
+    {dailyMetrics && incompleteChannels.length > 0 && <aside className="history-warning" aria-label="Achtung: Lücken im Zeitverlauf">
+      <strong>Achtung: Der Zeitverlauf ist unvollständig</strong>
+      <p>Für {incompleteChannels.map(key => labels[key]).join(', ')} fehlen einzelne oder alle Zeitwerte.
+        Tageswerte können trotzdem vollständig sein. Für die Lücken braucht der Import Messwerte im Zeitraster.</p>
+    </aside>}
+    <details className="data-notes"><summary><span aria-hidden="true">ⓘ </span>Hinweise zur Datengrundlage</summary>
+      <ul><li>Gemeinsame Minutenabdeckung: {pct(intervalCoverage)} der Zeit mit PV und Hausverbrauch im selben
+        Messintervall. Sie zeigt, wie viel des Verlaufs sich zeitlich vergleichen lässt.</li>
+        {dailyMetrics && <li>Gemeinsame Tagesabdeckung: {pct(dailyMetrics.coverage)} der Tage mit beiden Tagesenergien.
+          Das reicht für Tagesvergleiche, auch wenn der Verlauf innerhalb eines Tages Lücken hat.</li>}
+        {report.warnings.filter(w => !w.startsWith('Teildaten.') || !dailyMetrics || dailyMetrics.coverage < .999999)
         .map(w => <li key={w}>{w.startsWith('Zeitreihenenergie aus Momentanwerten')
           ? 'Zeitreihenenergie ist geschätzt. Die App verbindet benachbarte Leistungsmessungen und berechnet daraus die Energie im Intervall.'
           : w.startsWith('Sungrow-Tagesaggregate')
             ? 'Sungrow liefert eigene Tageswerte. Die App weist sie getrennt von den aus Minutenmessungen berechneten Werten aus.' : w}</li>)}
         {dailyMetrics && dailyMetrics.coverage >= .999999 && (report.resolutionMinutes == null || m.coverage < .999999) &&
           <li>PV und Hausverbrauch liegen für alle gewählten Tage als Tageswerte vor. Im Minutenverlauf fehlen gemeinsame Messintervalle.</li>}</ul>
-    </details>}
+    </details>
     {report.providerMetrics && <Panel title="Sungrow-Tagesaggregate"><p>PV {number(report.providerMetrics.pv.kwh)} kWh · Verbrauch {number(report.providerMetrics.load.kwh)} kWh · Bezug {number(report.providerMetrics.import.kwh)} kWh · Einspeisung {number(report.providerMetrics.export.kwh)} kWh.</p>
       <p>Batterieladung {number(report.providerMetrics.charge.kwh)} kWh · Batterieentladung {number(report.providerMetrics.discharge.kwh)} kWh.</p>
       {report.providerExportDifference != null && <p>Abweichung beim Export, Provider minus Zeitreihe · {number(report.providerExportDifference)} kWh.</p>}</Panel>}

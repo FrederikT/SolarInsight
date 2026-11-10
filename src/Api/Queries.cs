@@ -55,7 +55,9 @@ public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[]
         if (metrics.Retention is < 0 or > 1 || metrics.Autarky is < 0 or > 1)
             warnings.Add("Energieherkunft oder Periodengrenze prüfen.");
         if (incomplete) warnings.Add("Laufender Zeitraum.");
-        if (rows.Any(r => r.Quality == "trapezoid")) warnings.Add("Zeitreihenenergie aus Momentanwerten trapezförmig angenähert.");
+        if (rows.Any(r => r.Quality is "trapezoid" or "counter-mixed")) warnings.Add("Zeitreihenenergie aus Momentanwerten trapezförmig angenähert.");
+        if (rows.Any(r => r.SourceRevision == DeviceCounterHistory.Source))
+            warnings.Add("Gerätezähler liefern Energiedifferenzen im Messraster. PV-Ertrag daraus bestätigt keine getrennte AC-PV-Leistung.");
         if (provider is not null) warnings.Add("Sungrow-Tagesaggregate werden separat von integrierten Zeitreihen ausgewiesen.");
         return new(period, Zone.Id, Revision, rows.Length == 0 ? null :
             rows.Max(r => (r.End - r.Start).TotalMinutes), metrics, cost, incomplete, warnings.ToArray(), provider, exportDifference);

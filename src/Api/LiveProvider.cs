@@ -23,6 +23,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
     int liveWaiting;
     readonly SemaphoreSlim liveLock = new(1, 1);
     DateTimeOffset nextLiveCall;
+    bool liveSlotUsedByProbe;
     (Guid Plant, LiveMapping Mapping, LiveBatch Batch)? lastLive;
     public int LiveMinCloudSeconds => Math.Clamp(configuration.GetValue("Sungrow:LiveMinCloudSeconds", 300), 300, 86400);
     public TimeSpan Window => TimeSpan.FromMinutes(165);
@@ -215,7 +216,8 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             bool data = await db.Readings.AnyAsync(r => r.PlantId == plant.Id, ct) ||
                 await db.Aggregates.AnyAsync(a => a.PlantId == plant.Id, ct);
             var added = mapping.Daily;
-            bool additive = old is not null && (old with { Daily = added, Live = mapping.Live }) == mapping &&
+            bool additive = old is not null && (old with { Daily = added, Live = mapping.Live,
+                DeviceCounters = mapping.DeviceCounters }) == mapping &&
                 (old.Daily?.Fields.All(field => added?.Fields.Contains(field) == true) ?? true);
             if (data && (!additive || plant.Zone != zone))
                 throw new ArgumentException("Eine Änderung der Messpunktzuordnung oder Zeitzone erfordert eine separate Datenmigration.");
@@ -262,27 +264,54 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             var now = DateTimeOffset.UtcNow;
             if (now < nextLiveCall)
             {
+                if (liveSlotUsedByProbe)
+                    throw new ProviderFailure("diagnostic-cooldown", true, nextLiveCall - now);
                 if (lastLive is { } previous && previous.Plant == plant.Id && previous.Mapping == identity)
                     return previous.Batch;
                 throw new ProviderFailure("rate-limit", true, nextLiveCall - now);
             }
             lastLive = null;
-            // Take the token lock before claiming priority so a concurrent token refresh can finish.
-            var (keys, token) = await Access(ct, priority: true);
-            Interlocked.Increment(ref liveWaiting);
-            try
+            var raw = await ReadDeviceNow(mapping.DeviceKey, mapping.Points, false, ct);
+            var batch = LiveNormalization.Map(raw, plant.ProviderId!, mapping,
+                TimeZoneInfo.FindSystemTimeZoneById(plant.Zone), DateTimeOffset.UtcNow);
+            lastLive = (plant.Id, identity, batch);
+            return batch;
+        }
+        finally { liveLock.Release(); }
+    }
+
+    async Task<JsonElement> ReadDeviceNow(string device, IEnumerable<int> points, bool probe, CancellationToken ct)
+    {
+        // Take the token lock before claiming priority so a concurrent token refresh can finish.
+        var (keys, token) = await Access(ct, priority: true);
+        Interlocked.Increment(ref liveWaiting);
+        try
+        {
+            return await Send(c =>
             {
-                var raw = await Send(c =>
-                {
-                    nextLiveCall = DateTimeOffset.UtcNow.AddSeconds(LiveMinCloudSeconds);
-                    return sungrow.DeviceNow(keys.AppKey, keys.AccessKey, token, mapping, c);
-                }, ct, priority: true);
-                var batch = LiveNormalization.Map(raw, plant.ProviderId!, mapping,
-                    TimeZoneInfo.FindSystemTimeZoneById(plant.Zone), DateTimeOffset.UtcNow);
-                lastLive = (plant.Id, identity, batch);
-                return batch;
-            }
-            finally { Interlocked.Decrement(ref liveWaiting); }
+                nextLiveCall = DateTimeOffset.UtcNow.AddSeconds(LiveMinCloudSeconds);
+                liveSlotUsedByProbe = probe;
+                return sungrow.DeviceNow(keys.AppKey, keys.AccessKey, token, device, points, c);
+            }, ct, priority: true);
+        }
+        finally { Interlocked.Decrement(ref liveWaiting); }
+    }
+
+    public async Task<PointProbeResult> ProbeLive(Plant plant, string device, ProbePoint[] points, CancellationToken ct)
+    {
+        const string source = "Geräte-Livewerte";
+        await liveLock.WaitAsync(ct);
+        try
+        {
+            var remaining = nextLiveCall - DateTimeOffset.UtcNow;
+            if (remaining > TimeSpan.Zero) throw new ProviderFailure("rate-limit", true, remaining);
+            var raw = await ReadDeviceNow(device, points.Select(point => point.Id), true, ct);
+            return PointProbe.DeviceNow(raw, plant.ProviderId!, device, points,
+                TimeZoneInfo.FindSystemTimeZoneById(plant.Zone), DateTimeOffset.UtcNow);
+        }
+        catch (ProviderFailure failure)
+        {
+            return PointProbe.Failed(source, points, DateTimeOffset.UtcNow, failure);
         }
         finally { liveLock.Release(); }
     }
@@ -344,18 +373,68 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         }
     }
 
-    public async Task<object> Probe(Plant plant, DateOnly day, CancellationToken ct)
+    const int ProbeStep = 15;
+
+    internal static (DateTimeOffset Start, DateTimeOffset End) ProbeWindow(DateOnly day, TimeOnly first, TimeOnly last,
+        TimeZoneInfo zone, int step = ProbeStep)
+    {
+        if (step is not (5 or 15)) throw new ArgumentException("Das Raster muss 5 oder 15 Minuten betragen.");
+        var today = Calendar.Day(DateTimeOffset.UtcNow, zone);
+        if (day >= today)
+            throw new ArgumentException("Einen abgeschlossenen Tag wählen.");
+        var from = day.ToDateTime(first);
+        var to = last == TimeOnly.MinValue && first != TimeOnly.MinValue
+            ? day.AddDays(1).ToDateTime(last) : day.ToDateTime(last);
+        if (to <= from || to - from > TimeSpan.FromHours(3) ||
+            first.Ticks % TimeSpan.FromMinutes(step).Ticks != 0 ||
+            last.Ticks % TimeSpan.FromMinutes(step).Ticks != 0)
+            throw new ArgumentException($"Ein Fenster bis drei Stunden im {step}-Minuten-Raster an einem abgeschlossenen Tag wählen.");
+        if (zone.IsInvalidTime(from) || zone.IsInvalidTime(to) || zone.IsAmbiguousTime(from) ||
+            zone.IsAmbiguousTime(to) || zone.GetUtcOffset(from) != zone.GetUtcOffset(to))
+            throw new ArgumentException("Ein Zeitfenster außerhalb der Zeitumstellung wählen.");
+        return (TimeZoneInfo.ConvertTimeToUtc(from, zone), TimeZoneInfo.ConvertTimeToUtc(to, zone));
+    }
+
+    public async Task<PointProbeResult> ProbeDeviceMinutes(Plant plant, DeviceHistoryProbeRequest input,
+        ProbePoint[] points, CancellationToken ct)
+    {
+        string source = $"Gerätehistorie · {input.StepMinutes} Minuten";
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
+        var (start, end) = ProbeWindow(input.Day, input.Start, input.End, zone, input.StepMinutes);
+        try
+        {
+            var (keys, token) = await Access(ct);
+            var raw = await Send(c => sungrow.DeviceMinutes(keys.AppKey, keys.AccessKey, token, input.Device,
+                points.Select(point => point.Id).ToArray(), start, end, zone, c, input.StepMinutes), ct);
+            return PointProbe.Minutes(source, raw, input.Device, points, zone, start, end, DateTimeOffset.UtcNow);
+        }
+        catch (ProviderFailure failure)
+        {
+            return PointProbe.Failed(source, points, DateTimeOffset.UtcNow, failure);
+        }
+    }
+
+    public async Task<object> Probe(Plant plant, ProbeRequest input, CancellationToken ct)
     {
         if (plant.ProviderId is not { } id) throw new ArgumentException("Keine Sungrow-Anlage ausgewählt.");
+        var day = input.Day;
         var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
-        if (day >= Calendar.Day(DateTimeOffset.UtcNow, zone))
-            throw new ArgumentException("Einen abgeschlossenen Tag auswählen.");
-        var start = Calendar.Utc(day, zone).AddHours(11);
+        if (input.Start.HasValue != input.End.HasValue)
+            throw new ArgumentException("Start- und Endzeit gemeinsam angeben.");
+        var (start, end) = ProbeWindow(day, input.Start ?? new TimeOnly(11, 0), input.End ?? new TimeOnly(13, 0), zone);
         var (keys, token) = await Access(ct);
-        int[] minutePoints = [83067, 83033, 83052, 83106, 83549, 83238, 83129];
+        ProbePoint[] candidates =
+        [
+            new(83067, "PV-Kandidat", "power"), new(83033, "Anlagenwirkleistung", "power"),
+            new(83052, "Lastkandidat", "power"), new(83106, "Hausverbrauch", "power"),
+            new(83549, "Netzleistung", "power"), new(83238, "Batterieleistung", "power"), new(83129, "Ladezustand", "soc")
+        ];
+        var minutePoints = candidates.Select(point => point.Id).ToArray();
         int[] dayPoints = [83022, 83118, 83072, 83102, 83322, 83323];
         var minute = await Send(c => sungrow.Minutes(keys.AppKey, keys.AccessKey, token, id,
-            minutePoints, start, start.AddHours(2), zone, c, 15), ct);
+            minutePoints, start, end, zone, c, ProbeStep), ct);
+        var minuteReport = PointProbe.Minutes("Anlagenhistorie · 15 Minuten", minute, id, candidates,
+            zone, start, end, DateTimeOffset.UtcNow);
         var daily = await Send(c => sungrow.Days(keys.AppKey, keys.AccessKey, token, id, dayPoints, day, day, c), ct);
         JsonElement Series(JsonElement data) =>
             data.ValueKind == JsonValueKind.Object && data.TryGetProperty(id, out var series) ? series : default;
@@ -365,6 +444,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         var daySeries = Series(daily);
         return new
         {
+            minuteReport,
             minutes = minutePoints.Select(point => new { point, samples = minuteSeries.ValueKind == JsonValueKind.Array
                 ? minuteSeries.EnumerateArray().Count(row => row.ValueKind == JsonValueKind.Object &&
                     row.TryGetProperty($"p{point}", out var value) && HasNumber(value)) : 0 }).ToArray(),

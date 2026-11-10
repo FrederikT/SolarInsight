@@ -10,8 +10,8 @@ test('A20/A23 Demo: Zeitraum, Tagesdetail, Speicher, kombinierter Lauf und Expor
   await page.goto('/')
   await expect(page.getByText('Synthetische Demodaten', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Übersicht', exact: true })).toBeVisible()
-  const coverage = page.locator('.kpis article').filter({ hasText: 'Gemeinsame Minutenabdeckung' })
-  await expect(coverage.getByText('100 %', { exact: true })).toBeVisible()
+  await page.getByText('Hinweise zur Datengrundlage', { exact: false }).click()
+  await expect(page.getByText(/^Gemeinsame Minutenabdeckung: 100 %/)).toBeVisible()
   if (process.env.SOLAR_SCREENSHOT) {
     await expect(page.getByRole('img', { name: 'Energieverlauf' })).toBeVisible()
     await page.screenshot({ path: process.env.SOLAR_SCREENSHOT, fullPage: true })

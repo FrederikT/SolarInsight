@@ -125,6 +125,10 @@ Minutenpunkte und die Regeln für Vorzeichen, SOC und Zeitstempel explizit angeb
 
 Nach Änderung der Datei unter **Einstellungen → Anlage wechseln oder Betreiberprofil anwenden** dieselbe Anlage erneut aktivieren. Ergänzende Tages- und Live-Kanäle können hinzugefügt werden. Änderungen an den Grundlagen bereits gespeicherter Daten erfordern eine Datenmigration. Der normale Setup-Endpunkt nimmt keine Messpunktzuordnung entgegen.
 
+Die optionalen Live-Punkte `pvDc` und `inverterActive` erscheinen getrennt von der AC-Flussbilanz. Für das geprüfte Hybridgerät sind dies 13003 (PV-DC-Leistung am Wechselrichter) und 13011 (Wechselrichter-Wirkleistung).
+
+Für ein geprüftes Gerätezählerprofil kann `deviceCounters: true` gesetzt werden. `POST /api/v1/provider/device-counters/backfill` liefert im angemeldeten Betreiberzugriff mit CSRF-Schutz zunächst eine Vorschau. Der Body enthält `device`, `day`, `start`, `end` und `stepMinutes`. Gerät und Raster müssen dem aktiven Profil entsprechen. Erst `?apply=true` schreibt den begrenzten Zeitraum. Für jeden Kanal sind zwei direkt benachbarte Zählerstände in Wh oder kWh und Leistungstelemetrie an beiden Grenzen erforderlich. Rücksetzungen, überhöhte Sprünge und widersprüchliche Tageskontrollen führen zu ausgelassenen Intervallen beziehungsweise einem übersprungenen Fenster. Zählerdifferenzen werden nicht auf Lücken verteilt. Die Quelle erscheint im Bericht getrennt von trapezförmig geschätzten Energien.
+
 ### Lesender Heimnetz-Zugang
 
 Der Endpunkt `GET /api/v1/lan/now` ist standardmäßig deaktiviert. Für den Betrieb das Overlay `-f compose.lan.yaml` zur privaten Compose-Konfiguration ergänzen. `SOLAR_LAN_ENABLED=true`, `SOLAR_LAN_NETWORK` als konkretes CIDR des Heimnetzes und `SOLAR_LAN_KEY_SECRET` als Pfad zu einer lokalen Datei mit einem separaten zufälligen Leseschlüssel setzen. Ein 32-Byte-Zufallswert in Hex erfüllt die Dateivorgabe. Der Client übergibt `Authorization: Bearer <Leseschlüssel>`. Schlüssel gehören ausschließlich in die Secret-Datei und den Smart-Home-Secret-Speicher.

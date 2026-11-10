@@ -57,11 +57,11 @@
 | A22 | Geprüft | Privates HTTP-Login, CSRF, anonyme Sperre, Änderungen nach Login und Logout. Testpasswort fehlt in geprüften Antworten, Export und lokalen Testlogs. |
 | A23 | Geprüft | Playwright wechselt Zeitraum, öffnet Tag, kehrt zurück, vergrößert Speicher, kombiniert Module und exportiert CSV und JSON. Layoutprüfung bei 375 px. |
 | A24 | Geprüft mit Testdaten | pg_dump und pg_restore auf leere Datenbank. Restore von Anlagen-/Tarifdaten, State und Schlüsseln. Erneuter privater Login ohne Setup-Secret. Schlüssel-Restore entschlüsselt eine synthetische Provider-Tokenfixture. |
-| A25 | Offen | Freigegebene EU-Entwickleranwendung, Eigentümerautorisierung, autorisierte Tagesprobe mit Messpunktvertrag und tatsächlich geltende Kontingente fehlen. Öffentliche Verträge und synthetische Vertragstests liegen vor. |
+| A25 | Teilgeprüft | EU-App, Eigentümerautorisierung, reale Live-Kanäle und historische Zählerproben sind belegt. Offen bleiben die separate AC-PV-Messung, das tatsächliche App-Kontingent und die verfügbare Rückschau. [Neuere Prüfnachweise](#data-01-und-data-02--gerätezähler-und-getrennte-live-leistungen). |
 
 ## Fortsetzung
 
-1. Nach Sungrow-App-Freigabe mit einer autorisierten Anlage die in der Provider-Dokumentation beschriebene A25-Abnahme durchführen. Messorte, Vorzeichen, SOC-Semantik, Paketgrenzen und die reale Datenrückschau mit Belegen ergänzen.
+1. Die Restpunkte der Sungrow-Abnahme und die Nutzung gespeicherter Stichproben für den laufenden Tag klären. [Abnahme und nächste Schritte](today-acceptance.md).
 2. Repository-Lizenz durch den Eigentümer festlegen.
 
 Die manuelle OAuth-Codeübergabe, bekannte Modellgrenzen und Schlüsselhaltung sind in der Architektur und Betriebsdokumentation beschrieben. Messungen und Befehle stehen in verification.md.
@@ -168,6 +168,105 @@ Das private Profil enthält Live-Zuordnungen für Last, Netz und Batterieleistun
 
 Die private Statusabfrage am 10. November bestätigte die drei zugeordneten Kanäle. Die Freigabe zum Lesen des offenen iSolarCloud-Browserfensters lief ab. Für den Gegenvergleich fehlen deshalb zeitgleiche Portalwerte und für PV und SOC ein bestätigter Messpunkt beziehungsweise die bestätigte Skalierung. Das aktive Profil blieb erhalten.
 
+### DATA-01 und DATA-02 · Nachprüfung am 10. November
+
+Die private API bestätigte den abgeschlossenen Import für den 9. November (Europe/Berlin) ohne Fehler und ohne geänderte Datensätze. Im Bestand liegen sechs Sungrow-Tageskanäle und 83 von 96 möglichen Viertelstunden mit Hausverbrauch vor. PV, Netzbezug, Einspeisung, Ladung, Entladung und SOC fehlen im Minutenverlauf. Die aktive Minutenhistorie fragt ausschließlich Lastpunkt `83106` ab.
+
+Die autorisierte, lesende historische Tagesprobe für denselben Tag lieferte HTTP 200, alle sechs Tageskanäle sowie je neun Minutenstichproben für Last `83106` und Anlagenwirkleistung `83033`. PV `83067`, alternative Last `83052`, Netz `83549`, Batterie `83238` und SOC `83129` lieferten im geprüften Mittagsfenster keine Werte. Der Erfolg des Endpunkts erlaubt noch keine Aussage über die Freigabe einzelner Messpunkte.
+
+Am 10. November umfasste der lokale Tagesverlauf je 16 Live-Stichproben für Last, Netz und Batterie. Die jüngste Quellmessung dieser Stichprobe stammt von 10:45 Uhr und wurde gegen 10:49 Uhr abgerufen. PV und SOC waren ohne Zuordnung. Die bestehende Live-Probe unterstützt keine zusätzlichen Kandidaten. Profil und gespeicherte Historie wurden durch die Diagnose nicht geändert. Die Gerätehistorie und die lesende Live-Kandidatenprobe bleiben als nächste Prüfungen offen.
+
+### DATA-01 und DATA-02 · Gerätequelle und Lastlücke
+
+Die Geräteliste der privaten Instanz weist einen Sungrow SH10RT-V112 vom Typ 14 aus. Die bestehende EU-App war für eine Gerätehistorienprobe auf diesem Gerät autorisiert. Am 9. November 2026 von 11:00 bis 13:00 Uhr (Europe/Berlin) lieferte die Gerätehistorie neun Quellzeitpunkte im 15-Minuten-Raster:
+
+| Kanal | Punkt | Ergebnis | Stichprobe um 11:00 Uhr |
+| --- | --- | --- | --- |
+| Hausverbrauch | 13119 | 9 Werte in W | 653 W |
+| Netzbezug / Einspeisung | 13149 / 13121 | je 9 Werte in W | 13 / 0 W |
+| Batterieladung / -entladung | 13126 / 13150 | je 9 Werte in W | 2.675 / 0 W |
+| SOC | 13141 | 9 Rohwerte, Einheit leer | 0,378 roh |
+| DC-Gesamtleistung | 13003 | 9 Werte in W | 3.437 W |
+| Wechselrichter-Wirkleistung | 13011 | 9 Werte in W | 640 W |
+
+Die Wechselrichter-Wirkleistung liegt bei dieser Stichprobe nahe am Hausverbrauch abzüglich Netzbezug. Der SOC-Rohwert kann erst mit einem Portalwert desselben Zeitpunkts sicher skaliert werden. Der Gerätevertrag belegt das Raster, während die Integration der Gerätewerte zu Energien noch eine Bestätigung der Intervallsemantik benötigt. Das Profil und die Historie wurden durch die Proben nicht geändert.
+
+Die gespeicherten Tageswerte stimmen mit den iSolarCloud-Referenzen aus dem Backlog überein: PV 13,6 kWh und Last 16,1 kWh. Die 13 fehlenden Lastintervalle beginnen im Viertelstundenraster um 16:15 bis einschließlich 19:15 Uhr. Im Abfragefenster 16:15–19:15 Uhr lieferten Anlagen- und Gerätequelle jeweils nur einen Lastwert um 16:15 Uhr (539 W am Anlagenpunkt 83106, 465 W am Gerätepunkt 13119). Die Anlagenprobe über 19:15–19:45 Uhr lieferte erst um 19:30 und 19:45 Uhr wieder Lastwerte. Das aktive Anlagenprofil integriert Momentanwerte und benötigt beide Intervallgrenzen. Damit erklärt die Quelllücke alle 13 fehlenden Intervalle. Eine Wiederholung des Imports mit derselben Datenlage würde sie nicht schließen.
+
+Der Betreiberabgleich braucht einen Portalverlauf desselben Geräts am 9. November gegen 11:00–13:00 Uhr und eine zeitgleiche Live-Stichprobe mit PV, Last, Netzrichtung, Batterierichtung und von null verschiedenem SOC. Alternativ kann der Betreiber den Zugriff auf das angemeldete Portal für den Vergleich freigeben. Die App-Freigabe für die geprüfte Gerätehistorie liegt bereits vor. Die Anlagen-Live-Route weist laut Vertrag keinen vergleichbaren Quellzeitstempel aus und eignet sich damit nicht als Beleg für eine zeitgleiche AC-Flussbilanz.
+
+Die autorisierte Live-Probe am 10. November um 13:56:14 Uhr lieferte den Gerätezeitstempel 13:55 Uhr (Europe/Berlin). Am selben Gerät meldete Sungrow 683 W Hausverbrauch, 3 W Netzbezug, 0 W Einspeisung, 648 W Batterieladung, 0 W Entladung, 1.398 W DC-Gesamtleistung und 680 W Wechselrichter-Wirkleistung. Punkt 13141 lieferte den SOC-Rohwert 0,842 mit leerer Einheit. Die Wirkleistung plus Netzbezug ergibt in dieser Stichprobe den Hausverbrauch. Für SOC und PV bleibt der Portalabgleich vor einer Zuordnung erforderlich.
+
+### DATA-01 und DATA-02 · Abgleich im angemeldeten iSolarCloud-Portal
+
+Am 10. November 2026 um 14:14 Uhr (Europe/Berlin) lieferte die lesende Live-Probe den Gerätezeitstempel 14:10 Uhr. Die Geräteansicht in iSolarCloud zeigte dieselben 558 W Wirkleistung, 400 W Batterieladung, 0 W Entladung, 12 W Netzbezug und 0 W Einspeisung. Das Portal zeigte 85 % SOC zum API-Rohwert 0,852. Diese übereinstimmenden Leistungswerte stützen die Zuordnung zur selben Stichprobe. Die Geräteansicht zeigte keinen eigenen Messzeitstempel. Der Vergleich bestätigt die SOC-Skalierung als Anteil von 0 bis 1 für dieses Gerät. Die separate Anlagenübersicht zeigte abweichende Werte ohne sichtbaren Quellzeitstempel.
+
+Die Portal-Gerätekurve für den 9. November zeigte um 11:00 Uhr 3,4 kW DC-Gesamtleistung, 0,6 kW Wirkleistung, 2,7 kW Batterieladung und 0 kW Entladung. Das stimmt bei Portalrundung mit 3.437, 640, 2.675 und 0 W der Gerätehistorie überein. Auch die Unterbrechung nach 16:15 Uhr war in der Gerätekurve sichtbar. Der Vergleich belegt das Viertelstundenraster, aber keine Mittelwertbildung. Der AC-PV-Messort ist weiter offen. Betreiberprofil und Historie wurden bei diesem Abgleich nicht geändert.
+
+### DATA-01 und DATA-02 · Betreiberprofil und offene Quellen
+
+Das bestehende private Betreiberprofil wurde um Live-Punkt `13141` ergänzt. `socPercent: false` übernimmt den bestätigten Anteil von 0 bis 1. Dieselbe Anlage wurde über das reguläre Setup erneut aktiviert. Der lokale Mapping-Endpunkt bestätigte die Zuordnung. Die historischen Messpunktregeln wurden dabei beibehalten. Die Betreiberdatei wird beim privaten Start eingebunden und bleibt außerhalb des Repositorys.
+
+Der reguläre Abruf lieferte anschließend über `/api/v1/live/now` einen bestätigten SOC von 86,3 % für 14:25 Uhr (Europe/Berlin). Hausverbrauch, Netz und Batterie blieben bestätigt. Die Demo auf Port 8080 wurde per Compose neu gebaut und gestartet. Die private Instanz auf Port 8081 wurde per Release-Publish neu gebaut und mit derselben Datenbank und Konfiguration gestartet. Beide meldeten `ready`. ESLint, TypeScript, Vite, 25 Unit-Tests und 38 Integrations- und Vertragstests bestanden.
+
+Die Gerätehistorienprobe von 11:00 bis 13:00 Uhr (Europe/Berlin) lieferte am 1., 4. und 6. November 2026 je 6, 0 und 9 Rohwerte pro Punkt. Dies gilt für Last, Bezug, Einspeisung, beide Batterierichtungen, SOC, DC-Gesamtleistung und Wechselrichter-Wirkleistung. Die Leistungspunkte wurden in Watt geliefert. Die SOC-Reihe hatte keine Einheit im Provider-Wörterbuch. Die leere Reihe am 4. November ist auf das geprüfte Fenster beschränkt. Alle drei Anfragen waren autorisiert. Ein Nachimport aus dieser Quelle bleibt offen, bis der Provider Momentanwert oder Intervallmittel und den Zeitbezug bestätigt.
+
+Die Portal-Geräteliste enthält einen Hybridwechselrichter, die zugehörige Batterie und das Kommunikationsmodul. Ein separater PV-Wechselrichter oder PV-Produktionszähler ist dort nicht registriert. Die physische Installation ist damit nicht vollständig belegt. Der SH10RT kann PV- und Batterieleistung über denselben AC-Ausgang liefern und PV-Energie direkt in die Batterie leiten. Die Wechselrichter-Wirkleistung bleibt daher für die getrennte AC-PV-Bilanz ungeeignet. Für einen separaten Messpunkt braucht es den Anschlussplan oder eine Auskunft von Installateur oder Sungrow. [SH10RT-Handbuch, Abschnitte 3.2 und 6.1](https://info-support.sungrowpower.com/product-materials/31d744b7-742d-4707-bd1d-d6ed665c733c.pdf)
+
+### DATA-01 und DATA-02 · Gerätezähler und getrennte Live-Leistungen
+
+Die autorisierte Gerätehistorie des SH10RT-V112 lieferte am 9. November 2026 von 11:00 bis 13:00 Uhr (Europe/Berlin) neun Viertelstundenwerte pro Zähler. Die Gerätekurve im Portal zeigt im Tagesmodus DC-, Wirk- und Batterieleistung. Die API-Zählerstände ließen sich dort nicht direkt ablesen. Die Tageskontrolle vergleicht deshalb die Differenz der API-Stände von 00:00 bis 23:55 Uhr mit den separat bestätigten Anlagen-Tagesaggregaten.
+
+| Punkt | Kanal | 11:00 → 13:00 Uhr (Wh) | Differenz bis 23:55 Uhr (kWh) | Tagesaggregat (kWh) |
+| --- | --- | ---: | ---: | ---: |
+| 13134 | PV-Ertrag | 36.615.500 → 36.620.900 | 13,6 | 13,6 |
+| 13130 | Hausverbrauch | 23.897.700 → 23.900.600 | 16,1 | 16,1 |
+| 13148 | Netzbezug | 7.990.300 → 7.990.400 | 3,8 | 3,8 |
+| 13125 | Einspeisung | 19.920.100 → 19.920.200 | 0,1 | 0,1 |
+| 13034 | Batterieladung | 7.901.100 → 7.904.200 | 8,1 | 8,1 |
+| 13035 | Batterieentladung | 7.113.100 → 7.113.700 | 6,9 | 6,9 |
+
+Die letzten fünf Minuten des Tages fehlen in der Grenzwertprobe. Die Übereinstimmung belegt keine exakten Mitternachtswerte. Am 1. November führte die API Zählerstände vor 11:45 Uhr ohne passende Leistungstelemetrie fort. Die Last und der Bezug sprangen anschließend in einem Viertelstundenabstand um 17 beziehungsweise 13,2 kWh. Die Anwendung verwendet deshalb ausschließlich plausible, direkt benachbarte Stände mit passenden Leistungswerten an beiden Grenzen. Rücksetzungen, Lücken und überhöhte Sprünge ergeben keinen Intervallwert. Differenzen über Lücken bleiben Summen und werden nicht verteilt.
+
+Der gezielte Nachimport schrieb 5 Intervalle am 1. November (11:45–13:00 Uhr), 8 am 6. November (11:00–13:00 Uhr) und 8 am 9. November (11:00–13:00 Uhr). Die Fenster lieferten jeweils Werte für alle sechs Energiekanäle. Die Summe PV/Last beträgt 1,5/3,2 kWh, 6,8/4,0 kWh und 5,4/2,9 kWh in dieser Reihenfolge. Eine schreibgeschützte PostgreSQL-Prüfung bestätigte alle 21 Zeilen und weiterhin genau 13 fehlende Lastintervalle im Nachmittagsfenster des 9. November. Der 4. November wurde nicht nachgeladen. Historischer SOC ist weiterhin offen, da dieser Nachimport ausschließlich Energiedifferenzen aus Zählern speichert.
+
+Am 4. November um 11:00–13:00 Uhr enthielt die autorisierte 15-Minuten-Abfrage neun identische Stände je Zähler und die 5-Minuten-Abfrage 25 identische Stände je Zähler. Beide lieferten keine Watt- oder SOC-Stichproben. Es gab keine belastbare Nullmessung und keine benachbarten Leistungswerte für eine Trapezschätzung. Die private Tagesansicht lieferte am 9. November um 11:00 Uhr die erwarteten Intervallmittel von 3,2 kW PV-Ertrag, 0,4 kW Last und 2,8 kW Batterieladung. Die Netz-Heatmap lieferte um 11 Uhr je 0,1 kWh Bezug und Einspeisung.
+
+Der Live-Vergleich vom 10. November für den Gerätezeitstempel 14:10 Uhr (Abruf 14:14:27 Uhr) ist unten in Watt beziehungsweise SOC-Anteilen dokumentiert. Die Portal-Geräteansicht zeigte keinen eigenen Quellzeitstempel. Die Übereinstimmung mehrerer Kanäle stützt die Zuordnung zur gleichen Stichprobe.
+
+| Kanal | Geräte-API | iSolarCloud-Geräteansicht |
+| --- | --- | --- |
+| PV-DC-Leistung, 13003 | 1.039 W | gerundet 1 kW |
+| Wechselrichter-Wirkleistung, 13011 | 558 W | 558 W |
+| Hausverbrauch, 13119 | 570 W | in der Geräteansicht nicht angezeigt |
+| Netzbezug / Einspeisung, 13149 / 13121 | 12 / 0 W | 12 / 0 W |
+| Batterieladung / -entladung, 13126 / 13150 | 400 / 0 W | 400 / 0 W |
+| SOC, 13141 | 0,852 | gerundet 85 % |
+
+Die separate Anlagenübersicht liefert eine gerundete PV-Anzeige ohne belegten separaten AC-Messort oder vergleichbaren Gerätezeitstempel. Der veröffentlichte Anlagen-Live-Vertrag weist ebenfalls keinen vergleichbaren Quellzeitstempel aus. Die Übersicht führt deshalb PV-DC-Leistung und Wechselrichter-Wirkleistung mit Quellzeit getrennt von der weiterhin offenen AC-PV-Bilanz. [Anlagen-Live-Vertrag](https://developer-api.isolarcloud.eu/#/document/api?id=14061&project_id=1)
+
+ESLint, TypeScript, Vite, 25 Unit-Tests, 40 Integrations- und Vertragstests, 12 Linux-Playwright-Tests und PostgreSQL-Restore bestanden. Die Demo wurde über Compose auf Port 8080 und die private Instanz über den bestehenden Release-Startweg auf Port 8081 neu bereitgestellt. Beide meldeten `ready`.
+
+Der Browser-Smoke-Test gegen die private Instanz zeigte 0,684 kW PV-DC-Leistung und 0,665 kW Wechselrichter-Wirkleistung mit der gemeinsamen Quellzeit 14:45 Uhr (Europe/Berlin, Abruf 14:50:42 Uhr). Der AC-PV-Kanal blieb ohne Zuordnung. Die AC-Flussbilanz blieb unbestätigt.
+
+### DATA-01 und DATA-02 · Erweiterter Nachimport und Anzeige
+
+Der gezielte Gerätezähler-Nachimport für den 9. November 2026 prüfte den ganzen lokalen Tag in Fenstern von höchstens drei Stunden. Die letzte Abfrage nutzte die neu erlaubte Grenze um 00:00 Uhr des Folgetags. 75 weitere Viertelstunden wurden geschrieben. Die private Übersicht bestätigte danach für PV, Last, Bezug, Einspeisung, Ladung und Entladung jeweils 83 von 96 Viertelstunden, also 86,5 % gemeinsame Abdeckung für PV und Last. Tageswerte blieben bei 13,6 kWh PV, 16,1 kWh Last, 3,8 kWh Bezug, 0,1 kWh Einspeisung, 8,1 kWh Ladung und 6,9 kWh Entladung. Die 13 fehlenden Intervalle und historischer SOC bleiben offen.
+
+Unter **Einstellungen → Diagnose und Messpunkte → Zählerdaten nachladen** bietet ein bestätigtes Betreiberprofil eine Vorschau und eine separate Übernahme. Zählerdifferenzen fließen bei belegten benachbarten Grenzen ins Intervall. Der Nachimport kann eine Differenz über mehrere fehlende Intervalle nicht zeitlich auflösen. Eine separate Summenanzeige für solche Lücken steht noch aus. Der normale Anlagenimport und der gezielte Gerätezähler-Nachimport sind getrennte Abläufe.
+
+Die Übersicht hebt fehlende Zeitreihen hervor und zeigt beide Abdeckungszahlen mit ihrer Bedeutung unter **Hinweise zur Datengrundlage**. „Jetzt“ verwendet den vorhandenen PV-DC-Wert direkt als PV-Kachel, wenn kein AC-PV-Punkt zugeordnet ist. Wechselrichter-Wirkleistung bleibt separat. Die private API bestätigte für die Stichprobe vom 10. November um 15:30 Uhr (Europe/Berlin) 345 W DC und 629 W Wechselrichter-Wirkleistung.
+
+ESLint, TypeScript/Vite, der Release-Publish, 25 Unit-Tests, 40 Integrations- und Vertragstests und acht gezielte Playwright-Tests bestanden. Playwright prüfte Warnhinweis, Abdeckungsdetails, Live-Kachel und getrennte Vorschau und Übernahme mit Testantworten. Die Demo auf Port 8080 wurde per Compose neu gebaut und gestartet. Die private Instanz auf Port 8081 wurde aus demselben Quellstand mit der bestehenden Datenbank neu bereitgestellt. Beide meldeten Readiness. Der private Import und die anschließende Prüfung verwendeten reale Sungrow-Daten.
+
+### DATA-03 · Lesende Messpunktdiagnose
+
+Die private Oberfläche bietet Live-Kandidaten und die dokumentierte Geräte-Minutenhistorie unter **Einstellungen → Diagnose und Messpunkte → Gerätemesspunkte lesend prüfen**. Das Backend prüft die Zugehörigkeit des Geräts zur aktiven autorisierten Anlage und gibt die Punktliste vor. Rohwert, Vorzeichen, Einheit, Quellzeit, Abrufzeit und Anzahl gültiger Werte werden pro Punkt getrennt ausgewiesen. Punktbezogene Daten ohne Providerbegründung bleiben als ungeklärt gekennzeichnet. Die historische Anlagenprobe erlaubt ein gezieltes Zeitfenster und zeigt Minutenmesswerte und Tagesenergien getrennt.
+
+Die Proben teilen sich Aufrufabstand und Provider-Wartezeiten mit dem regulären Adapter. Die Live-Probe verbraucht höchstens einen regulären Cloud-Abrufplatz. Ein dadurch fälliger regulärer Abruf wird verschoben, ohne Messungen oder Abrufstatus im Live-Cache zu überschreiben. Bei der privaten Erstprobe meldete die Anwendung im laufenden Fünf-Minuten-Fenster die verbleibenden 221 Sekunden. Die anschließende autorisierte Probe lieferte nach Ablauf der Wartezeit Werte vom echten Gerät.
+
+ESLint, TypeScript, Vite, 25 Unit-Tests, 38 Integrations- und Vertragstests, zwölf Linux-Playwright-Tests und ein PostgreSQL-Restore bestanden. Die Verträge prüfen Null, fehlenden Punkt, unbekannte Einheit, fehlende Freigabe, die gemeinsame Live-Abrufgrenze und die EU-Gerätehistorie. Der Browser prüft die Diagnose mit simulierten Antworten. Demo auf Port 8080 und private Instanz auf Port 8081 wurden neu gebaut und über die bestehenden Startwege bereitgestellt. Beide meldeten `ready`. Die Gerätehistorie wurde zusätzlich mit dem echten SH10RT-V112 geprüft.
+
 ### UX-06 und UX-07 · Übersicht und Energiebilanz
 
 „Jetzt“ steht vor dem Zeitfilter und bleibt auch bei historischen Tagen aktuell. „Heute“ lädt den Verlauf erst beim Öffnen. Die Kennzahlen haben tastatur- und touchbedienbare Info-Symbole. Die Energiebilanz zeigt den gewählten Zeitraum, Tagesabdeckung, Ende des jüngsten Minutenintervalls und bilanzierbare Stunden separat. Sie benennt unbestätigte Energiepfade, fehlende Messwerte und unplausible Bilanzen. Vollständig fehlende Netz- und SOC-Reihen ergeben einen Leerzustand. Nullwerte bleiben darstellbar.
@@ -175,6 +274,8 @@ Die private Statusabfrage am 10. November bestätigte die drei zugeordneten Kan�
 Die Browser-Fixture mit 96 Lastintervallen zeigt 100 % Tagesabdeckung, 0 von 24 bilanzierbaren Stunden und keine Netz-/SOC-Grafik. Der Test öffnet die Herkunftsangabe der Quote per Tastatur. Die Layouttests prüfen Desktop, 375 Pixel und 125 % Schriftgröße.
 
 ### LIVE-01 · Sichtbarkeit und Abrufzeiten
+
+Eine schreibgeschützte Prüfung der privaten Datenbank bestätigte am 10. November 2026 60 erfolgreiche Live-Abrufe bis 18:43 Uhr und gespeicherte Stichproben bis 18:40 Uhr. Gleichzeitig lagen für den laufenden Tag keine historischen Intervalle vor. Die reguläre Tagesübersicht liest diese Live-Stichproben derzeit nicht. Der Befund und die geplante Abnahme stehen unter [LIVE-02](today-acceptance.md#laufender-tag).
 
 Der Browser-Test übernimmt neue Cache-Daten nach 30 Sekunden bei sichtbarem Tab, meldet einen ausgeblendeten Tab und pausiert dessen Refresh. Ein Backend-Test prüft das Auslaufen eines fehlenden Sichtbarkeitssignals. Die Diagnose zeigt Abrufmodus, Quellmessung, letzten Abrufversuch und frühesten nächsten Versuch getrennt. Wiederholte Quellzeitstempel und Abrufwartezeit sind sichtbar.
 

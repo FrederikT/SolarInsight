@@ -414,6 +414,11 @@ public class LiveImportTests
                 provider.ReadNow(plant, Mapping, default));
             Assert.Equal(1, calls);
             Assert.All(batches, batch => Assert.Equal(-1m, batch.Values["grid"]));
+            var probe = await provider.ProbeLive(plant, Mapping.DeviceKey, [new(13141, "SOC", "soc")], default);
+            Assert.Equal("rate-limit", probe.Failure);
+            Assert.True(probe.RetryAfterSeconds > 0);
+            Assert.Equal(1, calls);
+            Assert.Same(batches[0], await provider.ReadNow(plant, Mapping, default));
         }
         finally { File.Delete(file); }
 

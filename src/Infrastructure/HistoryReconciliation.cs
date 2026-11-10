@@ -29,8 +29,8 @@ public static class HistoryReconciliation
         row is not null && Covers(row.Value(), end, mapping);
 
     static bool Covers(Interval row, DateTimeOffset end, SungrowMapping mapping) =>
-        row.End == end && row.SourceRevision == "sungrow-minutes-v1" &&
-        row.Quality == (mapping.Instantaneous ? "trapezoid" : "mean-power") &&
+        row.End == end && (row.SourceRevision == DeviceCounterHistory.Source ||
+        row.SourceRevision == "sungrow-minutes-v1" && row.Quality == (mapping.Instantaneous ? "trapezoid" : "mean-power")) &&
         (mapping.Pv is null || row.Pv is >= 0) && (mapping.Load is null || row.Load is >= 0) &&
         (mapping.Grid is null || ValidPair(row.Import, row.Export)) &&
         (mapping.Battery is null || ValidPair(row.Charge, row.Discharge)) &&

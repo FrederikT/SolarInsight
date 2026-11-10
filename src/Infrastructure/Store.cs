@@ -134,6 +134,8 @@ public static class Storage
               "Discharge" = excluded."Discharge", "Soc" = excluded."Soc", "OpeningSoc" = excluded."OpeningSoc",
               "Quality" = excluded."Quality", "SourceRevision" = excluded."SourceRevision"
             WHERE "Readings" IS DISTINCT FROM excluded
+              AND ("Readings"."SourceRevision" <> {DeviceCounterHistory.Source} OR
+                   excluded."SourceRevision" = {DeviceCounterHistory.Source})
             """, ct);
         if (changed > 0)
         {
