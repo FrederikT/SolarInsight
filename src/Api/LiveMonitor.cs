@@ -33,20 +33,26 @@ public sealed class OverviewActivity
 
 public sealed record LiveValue(decimal? Value, string Direction, DateTimeOffset? MeasuredAt, long? AgeSeconds, string Quality);
 public sealed record LiveState(LiveValue Pv, LiveValue Load, LiveValue Grid, LiveValue Battery, LiveValue Soc,
-    decimal? PvSurplusKw, bool FlowConfirmed, DateTimeOffset? FetchedAt, string Quality);
+    decimal? PvSurplusKw, bool FlowConfirmed, DateTimeOffset? FetchedAt, string Quality)
+{
+    public LiveTiming? Timing { get; init; }
+}
+public sealed record LiveTiming(bool OverviewVisible, int CloudIntervalSeconds, DateTimeOffset? SourceMeasuredAt,
+    DateTimeOffset? NextEligibleAt, DateTimeOffset? RetryAt);
 
 public static class LiveStateView
 {
     public static LiveState Create(LivePoll? poll, LiveMeasurement[] rows, LiveMapping? mapping, DateTimeOffset now,
         TimeSpan maxAge)
     {
+        var configured = mapping is { Confirmed: true } ? mapping.Channels : null;
         LiveValue Channel(string channel, string positive = "neutral", string negative = "neutral")
         {
             var row = poll?.Channels.Split(',').Contains(channel) == true
                 ? rows.FirstOrDefault(r => r.Channel == channel) : null;
-            var at = row?.MeasuredAt ?? poll?.MeasuredAt;
+            var at = row?.MeasuredAt;
             long? age = at is { } measured ? Math.Max(0, (long)(now - measured).TotalSeconds) : null;
-            string quality = mapping?.Confirmed != true ? "unconfigured" : poll?.Quality switch
+            string quality = configured?.ContainsKey(channel) != true ? "unconfigured" : poll?.Quality switch
             {
                 "confirmed" or "repeated" => row is null ? "missing" : now - row.MeasuredAt > maxAge ? "stale" : "confirmed",
                 null => "missing",
@@ -88,8 +94,19 @@ public sealed class LiveMonitor(IServiceScopeFactory scopes, LiveProvider provid
             return LiveStateView.Create(null, [], mapping, DateTimeOffset.UtcNow, maxAge);
         var snapshot = cache;
         if (snapshot?.Plant != plant) snapshot = await Restore(db, plant, ct);
-        return LiveStateView.Create(snapshot.Poll, snapshot.Rows, mapping, DateTimeOffset.UtcNow, maxAge);
+        var now = DateTimeOffset.UtcNow;
+        var visible = activity.Visible(plant, now);
+        var cadence = Cadence(visible);
+        var poll = snapshot.Poll;
+        var due = poll?.FetchedAt + cadence;
+        if (poll?.RetryAt is { } wait && (due is null || wait > due)) due = wait;
+        return LiveStateView.Create(poll, snapshot.Rows, mapping, now, maxAge) with
+        {
+            Timing = new(visible, (int)cadence.TotalSeconds, poll?.MeasuredAt, due, poll?.RetryAt)
+        };
     }
+
+    TimeSpan Cadence(bool visible) => visible || background < cloudFloor ? cloudFloor : background;
 
     static async Task<Snapshot> Restore(Store db, Guid plant, CancellationToken ct)
     {
@@ -130,8 +147,7 @@ public sealed class LiveMonitor(IServiceScopeFactory scopes, LiveProvider provid
             retryAt = cache.Poll?.RetryAt ?? default;
         }
         var now = DateTimeOffset.UtcNow;
-        var cadence = activity.Visible(plant.Id, now) ? cloudFloor : background;
-        if (cadence < cloudFloor) cadence = cloudFloor;
+        var cadence = Cadence(activity.Visible(plant.Id, now));
         if (now < retryAt || (cache.Poll is { } previous && now - previous.FetchedAt < cadence)) return;
         string? failure = null;
         LiveBatch batch = LiveBatch.Unknown;

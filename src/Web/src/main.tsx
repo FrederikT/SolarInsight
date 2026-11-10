@@ -106,6 +106,7 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
       onClick={() => update({ page: id, detail: null, detailEnd: null })}>{title}</button>)}</div></nav>
     <main>
       {!plant?.data ? <Status error={plant?.error} /> : <>
+        {page === 'overview' && <LiveView zone={zone} />}
         {page !== 'settings' && <div className="period row">
           {detail ? <button className="secondary" onClick={() => update({ detail: null, detailEnd: null })}>Zurück zum Zeitraum</button> :
             <label>Zeitraum<select aria-label="Zeitraum" value={kind} onChange={e => update({ kind: e.target.value })}>{kinds.map(([id, label]) =>
@@ -121,8 +122,8 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
           {status?.data && <span>{bounds(status.data.report.period)}</span>}
         </div>}
         {runningImport && status.data?.progress && <Status text={`Datenimport · ${status.data.progress.percent} % verarbeitet`} />}
-        {page === 'overview' && <LiveView zone={zone} />}
-        {page === 'overview' && <Overview query={query} drill={drill} day={day} evidence={!!detailEnd} simulation={simulation} version={version} />}
+        {page === 'overview' && <><Overview query={query} drill={drill} day={day} evidence={!!detailEnd} simulation={simulation}
+          version={version} /></>}
         {page === 'potential' && <><h1>Speicher & Potenzial</h1>
           {status?.data?.report && plant.data.capabilities.simulation ? <Suspense fallback={<Status />}><ScenarioEditor period={status.data.report.period}
             simulation={simulation} setSimulation={setSimulation} drill={drill} /></Suspense> : <Status error={status?.error}

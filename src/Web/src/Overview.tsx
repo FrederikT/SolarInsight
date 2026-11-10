@@ -26,6 +26,7 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
     heat && !day ? '/heatmap?' + query : null, version)
   if (!state?.data) return <Status error={state?.error} />
   const { report, comparison, buckets } = state.data
+  const singleDay = Date.parse(report.period.end) - Date.parse(report.period.start) === 86_400_000
   const m = report.metrics
   const dailyMetrics = report.providerMetrics
   function dailyRatio(total: 'pv' | 'load', deducted: 'export' | 'import') {
@@ -35,13 +36,26 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
   }
   const estimatedAutarky = dailyRatio('load', 'import')
   const estimatedRetention = dailyRatio('pv', 'export')
+  function ratioScope(total: 'pv' | 'load', deducted: 'export' | 'import', label: string) {
+    const source = (total === 'pv' ? dailyMetrics?.retention : dailyMetrics?.autarky) != null ? dailyMetrics! : m
+    return source[total].coverage < .999999 || source[deducted].coverage < .999999 || report.incomplete
+      ? 'Vorläufig · nur gemeinsam erfasste Daten' : label
+  }
+  function ratioReason(total: 'pv' | 'load', deducted: 'export' | 'import') {
+    const missing = [total, deducted].filter(key => m[key].kwh == null && dailyMetrics?.[key].kwh == null)
+    if (missing.length) return 'Keine Messwerte für ' + missing.map(key => labels[key]).join(' und ')
+    if ((dailyMetrics?.[total].kwh ?? m[total].kwh) === 0) return labels[total] + ' beträgt 0 kWh'
+    if (m[total].coverage < .999999 || m[deducted].coverage < .999999)
+      return 'Zu wenig gemeinsame Messdaten für den gewählten Zeitraum'
+    return 'Berechnung benötigt bestätigte Energiepfade'
+  }
   const cost = report.cost
-  const seriesKeys = day ? keys : perspective === 'energy' ? energy : perspective === 'storage' ? storage : ['cost'] as Key[]
+  const seriesKeys = singleDay ? keys : perspective === 'energy' ? energy : perspective === 'storage' ? storage : ['cost'] as Key[]
   const chartNames = buckets.map(p => p.local || p.day || '')
-  const unit = day ? 'kW' : perspective === 'cost' ? 'EUR' : 'kWh'
+  const unit = singleDay ? 'kW' : perspective === 'cost' ? 'EUR' : 'kWh'
   const chartSeries = seriesKeys.map(key => ({
-    name: labels[key], type: day || key === 'soc' ? 'line' : 'bar',
-    yAxisIndex: day && key === 'soc' ? 1 : 0,
+    name: labels[key], type: singleDay || key === 'soc' ? 'line' : 'bar',
+    yAxisIndex: singleDay && key === 'soc' ? 1 : 0,
     data: buckets.map(p => key === 'soc' && p.soc != null ? p.soc * 100 : p[key] ?? null),
     ...(day && key === 'export' && events?.data ? { markArea: { silent: true, itemStyle: { opacity: .14 },
       data: events.data.events.map(e => {
@@ -63,37 +77,55 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
     return [labels[key], number(channel.kwh) + ' kWh',
       (useDaily ? 'Sungrow-Tageswerte · ' : '') + 'Abdeckung ' + pct(channel.coverage)]
   }), ['Autarkiegrad', pct(dailyMetrics?.autarky ?? m.autarky ?? estimatedAutarky),
-    dailyMetrics?.autarky != null || m.autarky != null ? 'Anteil des erfassten Hausverbrauchs'
-      : estimatedAutarky != null ? 'Näherung aus Tageswerten · setzt Betrieb ohne Netzladen voraus' : 'Benötigt Verbrauch und Netzbezug'],
+    dailyMetrics?.autarky != null || m.autarky != null ? ratioScope('load', 'import', 'Anteil des erfassten Hausverbrauchs')
+      : estimatedAutarky != null ? 'Näherung aus Tageswerten · setzt Betrieb ohne Netzladen voraus' : ratioReason('load', 'import')],
   ['Eigenverbrauchsquote', pct(dailyMetrics?.retention ?? m.retention ?? estimatedRetention),
-    dailyMetrics?.retention != null || m.retention != null ? 'Inkl. Speicherverluste und Bestandsänderung'
-      : estimatedRetention != null ? 'Näherung aus Tageswerten · setzt reine PV-Einspeisung voraus' : 'Benötigt PV-Ertrag und Einspeisung'],
+    dailyMetrics?.retention != null || m.retention != null ? ratioScope('pv', 'export', 'Inkl. Speicherverluste und Bestandsänderung')
+      : estimatedRetention != null ? 'Näherung aus Tageswerten · setzt reine PV-Einspeisung voraus' : ratioReason('pv', 'export')],
   ['Netto-Stromkosten', number(cost.net ?? (cost.importCoverage > 0 || cost.exportCoverage > 0 || cost.fixed > 0 ? cost.coveredNet : null)) + ' €',
     cost.complete ? 'Bezug und Grundpreis abzüglich Erlös' : 'Nur gedeckter Teilbetrag'],
-  ['Datenabdeckung', pct(m.coverage), 'Gemeinsame PV- und Verbrauchsdaten']]
+  ['Gemeinsame Minutenabdeckung', pct(report.resolutionMinutes == null ? 0 : m.coverage), 'PV und Hausverbrauch im selben Intervall'],
+  ...(dailyMetrics ? [['Gemeinsame Tagesabdeckung', pct(dailyMetrics.coverage), 'Sungrow-Tageswerte für PV und Hausverbrauch']] : [])]
   const heatPoints = heatmap?.data?.points ?? []
+  const hasHeatValues = heatPoints.some(point => (heat === 'import' ? point.import : point.export) != null)
+  const missingSeries = seriesKeys.filter(key => !buckets.some(point => point[key] != null))
   const heatDays = [...new Set(heatPoints.map(p => p.day))]
   const heatHours = [...new Set(heatPoints.map(p => String(p.hour).padStart(2, '0') + ':00 UTC+' + p.offset.slice(0, 5)))].sort()
   return <>
     <div className="section-heading"><div><span className="eyebrow">ENERGIEBILANZ</span><h1>{day ? 'Tagesdetail' : evidence ? 'Ereigniszeitraum' : 'Übersicht'}</h1>
       <p>{bounds(report.period)} · {report.timeZone}</p></div><a className="button secondary" href={base + '/exports/overview?' + query}>CSV exportieren</a></div>
-    {report.warnings.map(w => <Status key={w} text={w} />)}
+    {report.warnings.length > 0 && <details className="data-notes"><summary><span aria-hidden="true">ⓘ </span>Hinweise zur Datengrundlage</summary>
+      <ul>{report.warnings.filter(w => !w.startsWith('Teildaten.') || !dailyMetrics || dailyMetrics.coverage < .999999)
+        .map(w => <li key={w}>{w.startsWith('Zeitreihenenergie aus Momentanwerten')
+          ? 'Zeitreihenenergie ist geschätzt. Die App verbindet benachbarte Leistungsmessungen und berechnet daraus die Energie im Intervall.'
+          : w.startsWith('Sungrow-Tagesaggregate')
+            ? 'Sungrow liefert eigene Tageswerte. Die App weist sie getrennt von den aus Minutenmessungen berechneten Werten aus.' : w}</li>)}
+        {dailyMetrics && dailyMetrics.coverage >= .999999 && (report.resolutionMinutes == null || m.coverage < .999999) &&
+          <li>PV und Hausverbrauch liegen für alle gewählten Tage als Tageswerte vor. Im Minutenverlauf fehlen gemeinsame Messintervalle.</li>}</ul>
+    </details>}
     {report.providerMetrics && <Panel title="Sungrow-Tagesaggregate"><p>PV {number(report.providerMetrics.pv.kwh)} kWh · Verbrauch {number(report.providerMetrics.load.kwh)} kWh · Bezug {number(report.providerMetrics.import.kwh)} kWh · Einspeisung {number(report.providerMetrics.export.kwh)} kWh.</p>
       <p>Batterieladung {number(report.providerMetrics.charge.kwh)} kWh · Batterieentladung {number(report.providerMetrics.discharge.kwh)} kWh.</p>
       {report.providerExportDifference != null && <p>Abweichung beim Export, Provider minus Zeitreihe · {number(report.providerExportDifference)} kWh.</p>}</Panel>}
-    <div className="kpis">{kpis.map(([title, value, detail]) => <article key={title}><span>{title}</span><strong>{value}</strong><small>{detail}</small></article>)}</div>
-    <Panel title={day ? 'Gemessener Tagesverlauf' : 'Verlauf im Zeitraum'}>
+    <div className="kpis">{kpis.map(([title, value, detail]) => <article key={title}>
+      <div className="kpi-label"><span>{title}</span><details className="kpi-info">
+        <summary aria-label={'Details zu ' + title}>ⓘ</summary><p>{detail}</p>
+      </details></div>
+      <strong>{value}</strong>
+      {value.startsWith('—') && <small>Keine belastbare Angabe</small>}
+    </article>)}</div>
+    <Panel title={singleDay ? 'Gemessener Tagesverlauf' : 'Verlauf im Zeitraum'}>
       <div className="row">
-        {!day && <label>Perspektive<select value={perspective} onChange={e => setPerspective(e.target.value)}>
+        {!singleDay && <label>Perspektive<select value={perspective} onChange={e => setPerspective(e.target.value)}>
           <option value="energy">Energie</option><option value="cost">Kosten</option><option value="storage">Speicher</option></select></label>}
         <label>Vergleich<select value={compare} onChange={e => setCompare(e.target.value)}>
           <option value="">Aus</option><option value="previous">Vorperiode</option><option value="year">Vorjahr</option></select></label>
         {day && simulation && <label className="check"><input type="checkbox" checked={model} onChange={e => setModel(e.target.checked)} /> Szenario einblenden</label>}
       </div>
       {modeled?.error && <Status error={modeled.error} />}
+      {missingSeries.length > 0 && <p>Keine Werte im Verlauf für {missingSeries.map(key => labels[key]).join(', ')}.</p>}
       {chartSeries.some(series => series.data.some(value => value != null))
-        ? <Chart label={day ? 'Tagesverlauf mit Leistung und Ladezustand' : 'Energieverlauf'} option={chartOptions(chartNames, unit, chartSeries, !!day)}
-          click={day ? undefined : drill} /> : <Status text={day && dailyMetrics ?
+        ? <Chart label={singleDay ? 'Tagesverlauf mit Leistung und Ladezustand' : 'Energieverlauf'} option={chartOptions(chartNames, unit, chartSeries, singleDay)}
+          click={singleDay ? undefined : drill} /> : <Status text={singleDay && dailyMetrics ?
             'Für diesen Tag liegen Tageswerte vor. Ein Leistungsverlauf benötigt Minutenmesswerte.' :
             'Für diese Ansicht liegen im gewählten Zeitraum keine Daten vor.'} />}
       {comparison && <p>Vergleich {bounds(comparison.period)} · Netzbezug {number(comparison.metrics.import.kwh)} kWh · Einspeisung {number(comparison.metrics.export.kwh)} kWh · Netto {number(comparison.cost.net)} €{comparison.incomplete ? ' · laufend' : ''}{comparison.metrics.coverage < .999 ? ' · Teildaten' : ''}</p>}
@@ -103,11 +135,12 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
         <tbody>{buckets.map((p, i) => <tr key={p.start || p.day || i}><td>{p.day ? <button className="link" onClick={() => drill(p.day!)}>{date(p.day)}</button> : p.local}</td>
           {seriesKeys.map(key => <td key={key}>{key === 'soc' ? pct(p.soc) : number(p[key])}</td>)}</tr>)}</tbody></table></div></details>
     </Panel>
-    <EnergyInsights key={query} query={query} version={version} drill={drill} />
+    <EnergyInsights key={query} query={query} version={version} drill={drill} dailyCoverage={dailyMetrics?.coverage} />
     {!day && <Panel title="Tageszeit und Energie">
       <label>Heatmap<select value={heat} onChange={e => setHeat(e.target.value)}><option value="">Aus</option><option value="import">Netzbezug</option><option value="export">Einspeisung</option></select></label>
       {heat && !heatmap?.data && <Status error={heatmap?.error} />}
-      {heatPoints.length > 0 && <Chart label="Heatmap nach Tag, Stunde und UTC-Abstand" option={{
+      {heat && heatmap?.data && !hasHeatValues && <Status text={'Keine Stundenwerte für ' + (heat === 'import' ? 'Netzbezug' : 'Einspeisung') + ' im gewählten Zeitraum.'} />}
+      {hasHeatValues && <Chart label="Heatmap nach Tag, Stunde und UTC-Abstand" option={{
         animation: false, tooltip: { renderMode: 'richText' }, grid: { left: 125, right: 22, bottom: 75 },
         xAxis: { type: 'category', data: heatDays }, yAxis: { type: 'category', data: heatHours },
         visualMap: { min: 0, max: Math.max(1, ...heatPoints.map(p => (heat === 'import' ? p.import : p.export) || 0)), orient: 'horizontal', bottom: 5 },

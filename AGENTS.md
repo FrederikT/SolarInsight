@@ -7,3 +7,8 @@
 - Wenn der Nutzer eine Umsetzung oder Korrektur beauftragt, aktualisiere `docs/implementation-status.md` im selben Arbeitsschritt. Halte unter der passenden ID fest, was sich geändert hat, welche Prüfungen tatsächlich ausgeführt wurden und wie sie ausgingen. Kennzeichne ausstehende Prüfungen, Prüfungen mit Testdaten und wesentliche Abweichungen von der Anforderung.
 - Markiere einen Backlog-Punkt erst als erledigt, wenn seine Abnahmekriterien erfüllt und geprüft sind. Bei Teilergebnissen nenne die verbleibende Arbeit. Bei blockierten Punkten nenne die fehlende Voraussetzung und den nächsten Schritt. Verlinke erledigte Punkte mit ihrem Nachweis im Umsetzungsstand und gleiche widersprüchliche Statusangaben in betroffenen Checklisten ab.
 - Das Backlog beantwortet, was noch zu tun ist. Der Umsetzungsstand dokumentiert, was geliefert und geprüft wurde. Verlinke im Abschlussbericht die aktualisierten Einträge.
+
+## Lokale Bereitstellung nach Implementierungen
+
+- Baue Solar Insight nach jeder Implementierung oder Fehlerkorrektur aus dem aktuellen Quellstand neu. Aktualisiere die eingerichtete lokale Demo auf Port 8080 und die eingerichtete private Instanz auf Port 8081. Starte beide mit dem neuen Build, auch wenn sie zuvor gestoppt waren. Verwende die bestehenden lokalen Startwege und erhalte Datenbanken, Konfiguration und Zugangsdaten. Bei reiner Backlog- oder Dokumentationspflege entfällt dieser Schritt.
+- Prüfe nach dem Neustart den Readiness-Endpunkt und, soweit lokal möglich, den geänderten Ablauf. Halte Build, Neustart und Prüfergebnis in `docs/implementation-status.md` fest. Nenne im Abschlussbericht die lokale URL. Falls ein Schritt scheitert, dokumentiere den konkreten Blocker und den tatsächlichen Stand der Instanz.

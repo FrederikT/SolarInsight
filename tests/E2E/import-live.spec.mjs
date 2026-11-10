@@ -48,6 +48,7 @@ test('import preview and cancellation are separate actions', async ({ page }) =>
 })
 
 test('overview reads cache and signals visibility for its own tab', async ({ page }) => {
+  await page.clock.install()
   await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { authenticated: true, demo: false, csrf: '' } }))
   const signals = []
   await page.route('**/api/v1/live/activity', route => {
@@ -55,18 +56,38 @@ test('overview reads cache and signals visibility for its own tab', async ({ pag
     return route.fulfill({ status: 204 })
   })
   const missing = { value: null, direction: 'unknown', measuredAt: null, ageSeconds: null, quality: 'missing' }
+  let gridValue = -1.2
   await page.route('**/api/v1/live/now', route => route.fulfill({ json: {
-    pv: missing, load: missing, battery: missing, soc: missing, pvSurplusKw: null, flowConfirmed: false,
-    grid: { value: -1.2, direction: 'export', measuredAt: '2026-10-01T12:00:00Z', ageSeconds: 20, quality: 'confirmed' }
+    pv: { ...missing, quality: 'unconfigured' }, load: missing, battery: missing,
+    soc: { ...missing, value: 0, quality: 'confirmed' }, pvSurplusKw: null, flowConfirmed: false,
+    quality: 'repeated', fetchedAt: '2026-10-01T12:05:00Z',
+    timing: { overviewVisible: true, cloudIntervalSeconds: 300, sourceMeasuredAt: '2026-10-01T12:00:00Z', nextEligibleAt: null, retryAt: null },
+    grid: { value: gridValue, direction: 'export', measuredAt: '2026-10-01T12:00:00Z', ageSeconds: 20, quality: 'confirmed' }
   } }))
   await page.route('**/api/v1/live/today', route => route.fulfill({ json: {
     start: '2026-10-01T00:00:00Z', end: '2026-10-02T00:00:00Z', gaps: [],
     samples: [{ channel: 'grid', at: '2026-10-01T12:00:00Z', value: -1.2, source: 'live' }]
   } }))
   await page.goto('/?kind=day&anchor=2026-10-01')
-  await expect(page.getByText('Einspeisung · 1,2 kW')).toBeVisible()
+  await expect(page.getByText('1,2 kW', { exact: true })).toBeVisible()
+  await expect(page.getByText('Leer · 0 %')).toBeVisible()
+  await expect(page.getByText('Zuordnung ausstehend', { exact: true })).toBeVisible()
+  await page.getByText('Messalter und Abrufstatus', { exact: true }).click()
+  await expect(page.getByText(/keinen neueren Messwert/)).toBeVisible()
+  gridValue = -1.5
+  await page.clock.fastForward(30_000)
+  await expect(page.getByText('1,5 kW', { exact: true })).toBeVisible()
+  await page.getByText('Heutigen Leistungsverlauf anzeigen').click()
   await expect(page.getByRole('img', { name: 'Heutiger Leistungsverlauf' })).toBeVisible()
   await expect.poll(() => signals.at(-1)?.visible).toBe(true)
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(() => signals.at(-1)?.visible).toBe(false)
+  gridValue = -2
+  await page.clock.fastForward(30_000)
+  await expect(page.getByText('1,5 kW', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Datenstatus' }).click()
   await expect.poll(() => signals.at(-1)?.visible).toBe(false)
   expect(signals.at(-1).tab).toBe(signals[0].tab)
@@ -79,6 +100,8 @@ test('Demo renders the shared live dashboard and synthetic probe', async ({ page
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Jetzt', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Heute', exact: true })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Heutiger Leistungsverlauf' })).toHaveCount(0)
+  await page.getByText('Heutigen Leistungsverlauf anzeigen').click()
   await expect(page.getByRole('img', { name: 'Heutiger Leistungsverlauf' })).toBeVisible()
   await page.getByRole('button', { name: 'Einstellungen', exact: true }).click()
   await page.getByText('Live-Diagnose mit Demodaten', { exact: true }).click()
@@ -132,6 +155,63 @@ test('mobile owner setup requires only consent and plant selection', async ({ pa
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375)
 })
 
+test('Sungrow daily totals stay separate from incomplete interval charts', async ({ page }) => {
+  await page.route('**/api/v1/overview?*', async route => {
+    const response = await (await route.fetch()).json()
+    const unavailable = { kwh: null, coverage: 0 }
+    const monthly = new URL(route.request().url()).searchParams.get('kind') === 'month'
+    const full = kwh => ({ kwh, coverage: monthly ? .2 : 1 })
+    const { metrics } = response.report
+    await route.fulfill({ json: {
+      ...response,
+      report: { ...response.report, resolutionMinutes: 15, warnings: ['Teildaten. Energiemengen beziehen sich auf erfasste Intervalle.'],
+        metrics: { ...metrics, coverage: 0, pv: unavailable, load: full(22.5), import: unavailable, export: unavailable, autarky: null, retention: null },
+        providerMetrics: { ...metrics, coverage: monthly ? .2 : 1, pv: full(16.6), load: full(22.5), import: full(6.5), export: full(0), autarky: null, retention: null } },
+      buckets: [{ start: '2026-11-06T10:00:00Z', local: '11:00', load: 1 }],
+    } })
+  })
+  await page.route('**/api/v1/heatmap?*', route => route.fulfill({ json: { points: [
+    { day: '2026-11-06', hour: 11, offset: '01:00', import: null, export: 0 },
+  ] } }))
+  await page.route('**/api/v1/energy-insights?*', async route => {
+    const data = await (await route.fetch()).json()
+    const single = data.period.days === 1
+    await route.fulfill({ json: { ...data, knownPaths: false, latest: '2026-11-06T23:00:00Z',
+      breakdown: { household: null, production: null, validHours: 0, missingHours: 24, rejectedHours: 0 },
+      points: single ? Array.from({ length: 96 }, (_, i) => ({
+        start: new Date(Date.parse('2026-11-05T23:00:00Z') + i * 900000).toISOString(),
+        end: new Date(Date.parse('2026-11-05T23:00:00Z') + (i + 1) * 900000).toISOString(),
+        importKw: null, exportKw: null, soc: null, directKw: null, mix: null, limit: null,
+      })) : [] } })
+  })
+  await page.goto('/?kind=day&anchor=2026-11-06')
+  const kpis = page.locator('.kpis')
+  await expect(kpis.locator('article').filter({ hasText: 'Gemeinsame Minutenabdeckung' })).toContainText('0 %')
+  await expect(kpis.locator('article').filter({ hasText: 'Gemeinsame Tagesabdeckung' })).toContainText('100 %')
+  await expect(kpis.locator('article').filter({ hasText: 'Autarkiegrad' })).toContainText('71,1')
+  await expect(page.getByText(/Keine Werte im Verlauf für PV-Erzeugung/)).toBeVisible()
+  const balance = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Energiebilanz im gewählten Zeitraum' }) })
+  await expect(balance).toContainText('100 %')
+  await expect(balance).toContainText('0 von 24 Stunden')
+  await expect(page.getByText(/Keine Minutenmesswerte für Netzbezug, Einspeisung, Ladezustand/)).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Gemeldeter SOC und Netzleistung auf lokaler Uhrzeitachse' })).toHaveCount(0)
+  const info = page.getByLabel('Details zu Autarkiegrad')
+  await info.focus()
+  await info.press('Enter')
+  await expect(kpis.getByText(/Näherung aus Tageswerten · setzt Betrieb ohne Netzladen voraus/)).toBeVisible()
+  await page.getByText('Hinweise zur Datengrundlage').click()
+  await expect(page.getByText(/Im Minutenverlauf fehlen gemeinsame Messintervalle/)).toBeVisible()
+  const heatmap = page.getByRole('combobox', { name: 'Heatmap', exact: true })
+  await heatmap.selectOption('import')
+  await expect(page.getByText('Keine Stundenwerte für Netzbezug im gewählten Zeitraum.')).toBeVisible()
+  await heatmap.selectOption('export')
+  await expect(page.getByRole('img', { name: 'Heatmap nach Tag, Stunde und UTC-Abstand' })).toBeVisible()
+  await page.goto('/?kind=month&anchor=2026-11-06')
+  await page.getByLabel('Details zu Autarkiegrad').click()
+  await expect(kpis.locator('article').filter({ hasText: 'Autarkiegrad' }))
+    .toContainText('Zu wenig gemeinsame Messdaten für den gewählten Zeitraum')
+})
+
 test('all main views fit on desktop and mobile', async ({ page }) => {
   for (const width of [1400, 375]) {
     await page.setViewportSize({ width, height: 900 })
@@ -145,4 +225,16 @@ test('all main views fit on desktop and mobile', async ({ page }) => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth), tab + ' at ' + width).toBeLessThanOrEqual(width)
     }
   }
+})
+
+test('energy indicators wrap at 375 pixels with larger text', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 900 })
+  await page.goto('/')
+  await expect(page.getByText('Eigenverbrauchsquote', { exact: true })).toBeVisible()
+  await page.evaluate(() => { document.documentElement.style.fontSize = '125%' })
+  const widths = await page.locator('.kpis article').evaluateAll(cards => cards.map(card =>
+    card.scrollWidth <= card.clientWidth))
+  expect(widths).toHaveLength(8)
+  expect(widths.every(Boolean)).toBe(true)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375)
 })

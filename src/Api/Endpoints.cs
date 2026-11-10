@@ -52,7 +52,7 @@ public static class Endpoints
             }
             return Results.Ok(new
             {
-                view.Period, zone = view.Zone.Id, view.Hours,
+                view.Period, zone = view.Zone.Id, view.Hours, view.KnownPaths,
                 latest = view.Rows.Length == 0 ? (DateTimeOffset?)null : view.Rows[^1].End,
                 start = Calendar.Utc(view.Period.Start, view.Zone), end = Calendar.Utc(view.Period.End, view.Zone),
                 flow.Breakdown, flow.Points, storage,

@@ -6,7 +6,9 @@ const channels = [['pv', 'PV-Erzeugung'], ['load', 'Hausverbrauch'], ['grid', 'N
   ['battery', 'Batterie'], ['soc', 'Ladezustand']] as const
 type Channel = typeof channels[number][0]
 type Value = { value: number | null; direction: string; measuredAt: string | null; ageSeconds: number | null; quality: string }
-type Now = Record<Channel, Value> & { pvSurplusKw: number | null; flowConfirmed: boolean; quality: string }
+type Now = Record<Channel, Value> & { pvSurplusKw: number | null; flowConfirmed: boolean; quality: string;
+  fetchedAt?: string | null; timing?: { overviewVisible: boolean; cloudIntervalSeconds: number; sourceMeasuredAt: string | null;
+    nextEligibleAt: string | null; retryAt: string | null } }
 type Today = { start: string; end: string; samples: { channel: Channel; at: string; value: number; source: string }[];
   gaps: { channel: Channel; start: string; end: string; reason: string }[] }
 const directions: Record<string, string> = { import: 'Netzbezug', export: 'Einspeisung', charge: 'Ladung',
@@ -26,7 +28,8 @@ export function LiveView({ zone }: { zone: string }) {
   const [tab] = useState(tabId)
   const [version, refresh] = useState(0)
   const now = useData<Now>('/live/now', version)
-  const today = useData<Today>('/live/today', version)
+  const [showToday, setShowToday] = useState(false)
+  const today = useData<Today>(showToday ? '/live/today' : null, version)
   useEffect(() => {
     const signal = (visible: boolean) => { void request('/live/activity', 'POST', { tab, visible }).catch(() => {}) }
     const update = () => {
@@ -34,7 +37,7 @@ export function LiveView({ zone }: { zone: string }) {
       signal(visible)
       if (visible) refresh(v => v + 1)
     }
-    update()
+    signal(document.visibilityState === 'visible')
     document.addEventListener('visibilitychange', update)
     const timer = window.setInterval(() => { if (document.visibilityState === 'visible') update() }, 30_000)
     return () => {
@@ -47,8 +50,9 @@ export function LiveView({ zone }: { zone: string }) {
   const timeline = today?.data
   function value(channel: Channel) {
     const reading = state?.[channel]
-    if (reading?.value == null) return 'Unbekannt'
-    return channel === 'soc' ? pct(reading.value) : number(Math.abs(reading.value)) + ' kW'
+    if (reading?.value == null) return reading ? quality[reading.quality] ?? 'Kein Messwert' : 'Wird geladen …'
+    if (channel === 'soc') return reading.value === 0 ? 'Leer · 0 %' : pct(reading.value)
+    return number(Math.abs(reading.value), 3) + ' kW'
   }
   const hour = new Intl.DateTimeFormat('de-DE', { timeZone: zone, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
   return <>
@@ -56,8 +60,6 @@ export function LiveView({ zone }: { zone: string }) {
       {state?.quality === 'synthetic' && <p>Synthetische Live-Daten aus einem wiedergegebenen Demotag.</p>}
       {!state ? <Status error={now?.error} /> : <>
         {state.quality === 'unconfigured' && <p>Live-Messpunkte können in den Einstellungen geprüft und bestätigt werden.</p>}
-        <p className="notice"><strong>{directions[state.grid.direction]} · {value('grid')}</strong>
-          {state.grid.measuredAt && <> · {stamp(state.grid.measuredAt, zone)} · vor {number(state.grid.ageSeconds, 0)} s</>}</p>
         <div className="live-flow" aria-label="Aktuelle Energieflüsse">
           {channels.map(([key, title]) => <div className={'live-' + key} key={key}>
             <strong>{title}</strong><span>{value(key)}</span>
@@ -65,14 +67,28 @@ export function LiveView({ zone }: { zone: string }) {
               (key === 'pv' || key === 'grid' && state.grid.direction === 'import' ||
                 key === 'battery' && state.battery.direction === 'discharge') ? '→ Anlage · ' :
               state.flowConfirmed && state[key].value !== 0 && (key === 'grid' || key === 'battery') ? '← Anlage · ' : ''}
-              {directions[state[key].direction] ?? ''} {state[key].value === null ? quality[state[key].quality] : ''}
-              {state[key].value === null && state[key].ageSeconds != null ? ' · vor ' + number(state[key].ageSeconds, 0) + ' s' : ''}</small>
+              {key !== 'soc' && state[key].value !== null ? directions[state[key].direction] : null}
+              {state[key].measuredAt && <> {stamp(state[key].measuredAt!, zone)}
+                {state[key].ageSeconds != null && <> · {number(Math.floor(state[key].ageSeconds! / 60))} Min. alt</>}</>}</small>
           </div>)}
         </div>
-        <p>Bestätigter PV-Überschuss {state.pvSurplusKw == null ? 'unbekannt' : number(state.pvSurplusKw) + ' kW'}.</p>
+        {state.pvSurplusKw != null && <p>Bestätigter PV-Überschuss {number(state.pvSurplusKw, 3)} kW.</p>}
+        {state.timing && <details><summary>Messalter und Abrufstatus</summary>
+          <dl className="facts">
+            <div><dt>Letzte Quellmessung</dt><dd>{state.timing.sourceMeasuredAt ? stamp(state.timing.sourceMeasuredAt, zone) : 'Noch keine'}</dd></div>
+            <div><dt>Letzter Cloud-Abrufversuch</dt><dd>{state.fetchedAt ? stamp(state.fetchedAt, zone) : 'Noch keiner'}</dd></div>
+            <div><dt>Abrufmodus</dt><dd>{state.timing.overviewVisible ? 'Übersicht sichtbar' : 'Hintergrund'} · mindestens {number(state.timing.cloudIntervalSeconds / 60)} Min.</dd></div>
+            {state.timing.nextEligibleAt && <div><dt>Frühester nächster Abruf</dt><dd>{stamp(state.timing.nextEligibleAt, zone)}</dd></div>}
+          </dl>
+          <p>Die sichtbare Übersicht liest den lokalen Cache alle 30 Sekunden.</p>
+          {state.quality === 'repeated' && <p>Sungrow hat beim letzten Abruf keinen neueren Messwert geliefert.</p>}
+          {state.timing.retryAt && <p>Der letzte Abruf ist fehlgeschlagen. Die Wiederholung wartet bis {stamp(state.timing.retryAt, zone)}.</p>}
+        </details>}
       </>}
     </Panel>
     <Panel title="Heute">
+      <details onToggle={e => setShowToday(e.currentTarget.open)}>
+      <summary>Heutigen Leistungsverlauf anzeigen</summary>
       <p>Positive Netzleistung bedeutet Bezug, positive Batterieleistung Ladung.
         Momentwerte sind Stichproben. Der Tagesverlauf überbrückt keine Lücken.</p>
       {!timeline ? <Status error={today?.error} /> : <>
@@ -96,6 +112,7 @@ export function LiveView({ zone }: { zone: string }) {
           <ul>{timeline.gaps.map(gap => <li key={gap.channel + gap.start}>{channels.find(([key]) => key === gap.channel)?.[1]} ·
             {' '}{stamp(gap.start, zone)} bis {stamp(gap.end, zone)} · {gapReasons[gap.reason] ?? 'Abruf fehlgeschlagen'}</li>)}</ul></details>}
       </>}
+      </details>
     </Panel>
   </>
 }

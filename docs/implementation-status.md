@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-03 umgesetzt und lokal mit synthetischen Daten oder Provider-Fixtures geprüft. CI-01 wartet auf Zugriff auf den GitLab-Lauf. |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-03 umgesetzt und lokal mit synthetischen Daten oder Provider-Fixtures geprüft. CI-01 wartet auf die GitHub-Abnahme des Layoutfixes. |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | Entscheidung des Eigentümers offen. |
 
 ## Umsetzungsliste
@@ -94,6 +94,10 @@ Der Release-Build, die EF-Modellprüfung, ESLint, TypeScript/Vite, 24 Unit-Tests
 
 ## Erneute Abnahme und lokale Bereitstellung
 
+Am 8. November 2026 wurde die laufende lokale Demo auf Port 8080 mit Docker Compose aus dem aktuellen Quellstand neu gebaut. Compose ersetzte den App-Container und verwendete die vorhandene Datenbank weiter. Der Readiness-Endpunkt meldete HTTP 200. Die Monatsübersicht meldete 100 % Datenabdeckung.
+
+Die private Instanz auf Port 8081 war zusammen mit ihrer lokalen PostgreSQL-Instanz gestoppt. Beide wurden mit der vorhandenen Datenbank und Konfiguration gestartet. Die App verwendet einen neuen Release-Build. Der Readiness-Endpunkt meldete HTTP 200, der Sitzungsendpunkt bestätigte den privaten Modus und der anonyme Zugriff auf die Anlagendaten erhielt HTTP 401.
+
 Docker Compose hat das aktuelle Image gebaut und die bestehende Demo auf Port 8080 aktualisiert. Die private Instanz auf Port 8081 erhielt denselben Quellstand als .NET Release-Publish. Vor ihrer ersten Migration wurde ein lokaler Datenbankdump erstellt. Beide Instanzen meldeten HTTP 200 auf `/health/ready`.
 
 Zusätzlich starteten getrennte Compose-Projekte mit frischen Volumes für Demo und privaten Testbetrieb. Die Demo schloss den synthetischen Import ab. Bestanden sind 25 Unit-Tests, sechs Playwright-Tests gegen diese Compose-Projekte, ESLint, TypeScript und der Release-Build. Der neue Speichertest prüft, dass dieselbe SOC-Messung vor und nach einem Wechsel der Ladegrenze unterschiedlich eingeordnet wird.
@@ -126,4 +130,58 @@ Ein lokaler Testlauf auf leerem PostgreSQL scheiterte bei paralleler Initialisie
 
 Lokal bestanden der .NET Release-Publish, die EF-Modellprüfung, TypeScript, ESLint und Vite-Build, 25 Unit-Tests, 36 PostgreSQL- und Vertragstests sowie 9 Playwright-Tests gegen getrennte lokale Demo- und private Testinstanzen. Der Demo-Neustart erhielt die vollständige Monatsabdeckung. Der PostgreSQL-Restore in eine leere Datenbank enthielt die erwarteten Anlagen- und Tarifdaten. Diese Prüfung lief mit lokalem PostgreSQL und dem Release-Publish.
 
-Der Checkout enthält nur den GitHub-Remote und den Workflow `.github/workflows/ci.yml`. Die GitHub-Abfrage für den aktuellen Commit lieferte keine PR-Workflow-Läufe. Für die gemeldete GitLab-Pipeline fehlen Projekt- oder Pipeline-Link und Zugriff auf das fehlerhafte Jobprotokoll. Mit dem Link lässt sich die tatsächliche Ursache abgleichen und ein korrigierter Lauf verifizieren. Ein erfolgreicher GitLab-Lauf liegt noch nicht vor.
+Das [GitHub-Jobprotokoll zum Migrationsfehler](https://github.com/FrederikT/SolarInsight/actions/runs/42470317220/job/128699313378) bestätigt SQLSTATE `42701` vor dem Fix. Der [aktuelle Lauf für `d5139c5`](https://github.com/FrederikT/SolarInsight/actions/runs/42645352279/job/129257022188) besteht Backend, Frontend und den Start beider Compose-Stacks. Playwright meldet in Übersicht und Tagesdetail eine Dokumentbreite von 388 statt 375 Pixeln. Die Restore-Prüfung wurde dadurch übersprungen.
+
+Im lokalen Linux-Chromium lässt sich der Überlauf mit 125 % Schriftgröße reproduzieren. Der lange KPI-Name „Eigenverbrauchsquote“ vergrößerte die innere Grid-Spalte über die Karte hinaus. Die Spalte darf jetzt schrumpfen und lange Wörter werden bei Bedarf umgebrochen. Der neue Regressionstest prüft die Karten und die Dokumentbreite bei 375 Pixeln mit vergrößerter Schrift. Der GitHub-Workflow bleibt unverändert.
+
+Am 10. November 2026 wurden die [lokale Demo](http://127.0.0.1:8080) per Docker Compose und die [private Instanz](http://127.0.0.1:8081) per .NET Release-Publish neu gebaut und gestartet. Beide behalten ihre Datenbank und Konfiguration, melden `ready` und liefern dieselbe korrigierte CSS-Datei aus. TypeScript, ESLint und Vite-Build liefen erfolgreich durch.
+
+Alle 10 Playwright-Tests liefen mit Linux-Chromium 1.58.2 gegen die lokale Demo und eine isolierte private Compose-Testinstanz durch. Der Restore der privaten Testdatenbank in eine leere PostgreSQL-Datenbank ergab die erwartete Anlage und einen Tarif. Der Layoutfix liegt lokal vor. Ein GitHub-Lauf mit diesem Fix steht noch aus.
+
+## Übersicht und Datenprüfung vom 10. November 2026
+
+### UX-04 und UX-05 · Kennzahlen und Zeitreihen
+
+Die Übersicht trennt gemeinsame Tages- und Minutenabdeckung. Unter dem Info-Symbol stehen die Erläuterungen zu Quellen und Näherungen. Bei vollständigen Tageswerten für PV und Verbrauch benennt der Hinweis konkret die unvollständige Minutenreihe. Fehlende Eingangsgrößen, zu wenige Daten und fehlende Bestätigung von Energiepfaden werden bei den Quoten unterschieden, soweit sich der Grund aus dem Bericht ableiten lässt. Berechenbare Quoten aus unvollständigen Intervallreihen werden als vorläufig markiert. Live-Stichproben werden weiterhin nicht als Energiedaten für die Tagesquote verwendet.
+
+Einzelne Tage zeigen im Zeitverlauf kW und SOC in Prozent. Der Verlauf benennt fehlende Reihen. Die Heatmap zeigt einen Leerzustand für den gewählten Kanal und behandelt gemessene Nullwerte als Werte. Auf dem Desktop wurde die Maximalbreite angehoben. Die Kennzahlen des gewählten Zeitraums stehen vor der kompakten Live-Anzeige. Das Diagramm für den laufenden Tag wird erst nach dem Aufklappen geladen.
+
+### DATA-01 · Lokaler November-Bestand
+
+Eine schreibgeschützte Abfrage der privaten PostgreSQL-Datenbank bestätigte folgende Daten.
+
+| Tag | Sungrow-Tageskanäle | Historische Intervalle | Gemeinsame PV-/Verbrauchsintervalle |
+| --- | --- | --- | --- |
+| 1. November | PV, Last, Bezug, Einspeisung, Ladung, Entladung | 49 mit ausschließlich Last | 0 |
+| 4. November | PV, Last, Bezug, Einspeisung, Ladung, Entladung | 34 mit ausschließlich Last | 0 |
+| 6. November | PV, Last, Bezug, Einspeisung, Ladung, Entladung | 96 mit ausschließlich Last | 0 |
+
+Damit sind die Tagesaggregate am 6. November vorhanden und die 0 % gemeinsamer Minutenabdeckung sind korrekt. Autorisierte Stichproben vom 10. November lieferten für alle drei abgefragten Tage alle sechs Tageskanäle. Im 15-Minuten-Mittagsfenster lieferten Last (83106) und Anlagenwirkleistung (83033) am 1., 4. und 6. November jeweils 6, 0 und 9 Werte. Die Anlagenwirkleistung ist kein bestätigter PV-Kanal. Die geprüften Kandidaten für PV (83067), alternative Last (83052), Netz (83549), Batterie (83238) und SOC (83129) lieferten in allen drei Fenstern null Werte.
+
+Die erfolgreiche Anfrage bestätigt den Zugriff auf den Endpunkt. Eine leere Messpunktreihe unterscheidet ohne zusätzlichen Providerbeleg fehlende Punktberechtigung und ausbleibende Quellwerte nicht. Die gespeicherten Lastintervalle am 4. November belegen Daten außerhalb oder unabhängig vom abgefragten Mittagsfenster. Für PV, Netz, Batterie und SOC fehlt eine bestätigte historische Zuordnung. Es gab daher keinen Profilwechsel und keinen Nachimport derselben Zeiträume.
+
+### DATA-02 · Live-Profil und Anzeige
+
+Das private Profil enthält Live-Zuordnungen für Last, Netz und Batterieleistung. Die lokale Datenbank bestätigte aufeinanderfolgende Live-Zeitstempel in Fünf-Minuten-Abständen. PV und SOC fehlen im Profil. Die Anzeige unterscheidet fehlende Zuordnung, fehlenden Wert, veralteten Wert und Abruffehler. Bestätigte 0 % SOC erscheinen als „Leer · 0 %“. SOC bezeichnet den Ladezustand. Laden und Entladen stehen bei der Batterieleistung. Der Gleichzeitvergleich der gemeldeten Wattwerte mit iSolarCloud steht aus.
+
+Die private Statusabfrage am 10. November bestätigte die drei zugeordneten Kanäle. Die Freigabe zum Lesen des offenen iSolarCloud-Browserfensters lief ab. Für den Gegenvergleich fehlen deshalb zeitgleiche Portalwerte und für PV und SOC ein bestätigter Messpunkt beziehungsweise die bestätigte Skalierung. Das aktive Profil blieb erhalten.
+
+### UX-06 und UX-07 · Übersicht und Energiebilanz
+
+„Jetzt“ steht vor dem Zeitfilter und bleibt auch bei historischen Tagen aktuell. „Heute“ lädt den Verlauf erst beim Öffnen. Die Kennzahlen haben tastatur- und touchbedienbare Info-Symbole. Die Energiebilanz zeigt den gewählten Zeitraum, Tagesabdeckung, Ende des jüngsten Minutenintervalls und bilanzierbare Stunden separat. Sie benennt unbestätigte Energiepfade, fehlende Messwerte und unplausible Bilanzen. Vollständig fehlende Netz- und SOC-Reihen ergeben einen Leerzustand. Nullwerte bleiben darstellbar.
+
+Die Browser-Fixture mit 96 Lastintervallen zeigt 100 % Tagesabdeckung, 0 von 24 bilanzierbaren Stunden und keine Netz-/SOC-Grafik. Der Test öffnet die Herkunftsangabe der Quote per Tastatur. Die Layouttests prüfen Desktop, 375 Pixel und 125 % Schriftgröße.
+
+### LIVE-01 · Sichtbarkeit und Abrufzeiten
+
+Der Browser-Test übernimmt neue Cache-Daten nach 30 Sekunden bei sichtbarem Tab, meldet einen ausgeblendeten Tab und pausiert dessen Refresh. Ein Backend-Test prüft das Auslaufen eines fehlenden Sichtbarkeitssignals. Die Diagnose zeigt Abrufmodus, Quellmessung, letzten Abrufversuch und frühesten nächsten Versuch getrennt. Wiederholte Quellzeitstempel und Abrufwartezeit sind sichtbar.
+
+Die private Instanz meldete im Hintergrund 600 Sekunden als frühesten nächsten Cloud-Abruf und in derselben Stichprobe rund eine Minute Differenz zwischen Quellmessung und Abruf. Der Zehn-Minuten-Sprung ist damit im Hintergrund möglich. Der historische Sprung lässt sich ohne damaligen Sichtbarkeitsstatus nicht eindeutig zuordnen.
+
+### Lokale Bereitstellung
+
+TypeScript, ESLint, Vite und der .NET-Release-Publish liefen durch. Ein Playwright-Lauf gegen die lokale Demo ergab zehn bestandene Tests und einen übersprungenen privaten Anmeldetest. Beim erneuten Lauf erhielt der allgemeine Demoablauf vor dem CSV-Export HTTP 429. Die übrigen neun Tests bestanden. Der gezielte Browser-Test für Tages- und Monatsabdeckung sowie Heatmap-Leerzustand und gemessene Null bestand auch separat. Der Live-Cache-Test deckte 0 % SOC ab.
+
+Das Demo-Image wurde mit Docker Compose neu gebaut und der App-Container auf Port 8080 ersetzt. Die private Instanz auf Port 8081 wurde mit dem neuen Release-Publish über ihren bestehenden Startweg neu gestartet. Datenbank und Konfiguration wurden weiterverwendet. Beide Instanzen meldeten HTTP 200 auf `/health/ready`. Der private Server lieferte die Startseite aus dem neuen Build.
+
+Mit UX-06, UX-07 und LIVE-01 bestanden TypeScript, ESLint, Vite, 25 Unit-Tests, 36 Integrations- und Vertragstests, 11 Linux-Playwright-Tests und der PostgreSQL-Restore. Beide lokalen Instanzen wurden aus diesem Quellstand erneut bereitgestellt.

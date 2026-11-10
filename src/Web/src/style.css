@@ -7,19 +7,21 @@ button,.button,input,select{font:inherit}.button,button{border:1px solid transpa
 .row,.fields{display:flex;align-items:end;gap:.75rem;flex-wrap:wrap}.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))}.row>.check{align-self:center}.period{padding:.85rem 1rem;border:1px solid var(--line);border-radius:12px;background:#e9f0e9;margin-bottom:1.4rem}.section-heading{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}.section-heading p{color:var(--muted)}.eyebrow{font-size:.78rem;font-weight:750;letter-spacing:.15em;color:#496455}.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px;margin-bottom:1.2rem}.kpis article,.panel{border:1px solid var(--line);border-radius:13px;background:white;padding:clamp(.8rem,2vw,1.25rem)}.kpis article{display:grid;gap:.25rem}.kpis article>strong{font-size:1.55rem;letter-spacing:-.03em;color:var(--ink)}small,.kpis article>span{color:var(--muted)}.panel{margin-bottom:1rem}.chart{height:340px;width:100%;min-width:0}.table{overflow-x:auto;max-width:100%}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,th{padding:.52rem .65rem;border-bottom:1px solid var(--line);text-align:left}thead{background:#edf3ee}th{font-weight:650}.notice{background:#fff5d9;border:1px solid #ecd59a;padding:.65rem .8rem;border-radius:8px}.notice.error{background:#ffefed;border-color:#edb3ad;color:#7a221f}
 label{display:grid;gap:.3rem;font-size:.93rem;font-weight:620}input,select{max-width:100%;min-width:0;border:1px solid #afc1b4;padding:.45rem;border-radius:7px;background:#fff;color:inherit}.check{display:flex;align-items:center;gap:.4rem;margin:.4rem 0}.check input{accent-color:var(--green);width:1.15rem;height:1.15rem}.actions{margin-block:1rem}fieldset{min-width:0;border:1px solid var(--line);border-radius:8px;margin:0 0 .8rem;padding:.6rem .9rem}legend,summary{font-weight:690}summary{cursor:pointer;margin:.65rem 0}form>button{margin-top:.8rem}.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:.7rem}.facts div{padding:.65rem;border-radius:8px;background:#edf3ee}.facts dd{margin:.3rem 0 0;font-weight:680}.result{border-top:1px solid var(--line);margin-top:1.2rem}.result>a{margin-bottom:.7rem}
 .energy-rings{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:1rem}.energy-rings .chart{height:230px}.energy-rings ul{list-style:none;padding:0}.energy-swatch{display:inline-block;width:.8em;height:.8em;border-radius:50%;margin-inline-end:.5em}
+.kpis article {
+  grid-template-columns: minmax(0, 1fr);
+  overflow-wrap: anywhere;
+}
 @media(max-width:600px){.plant{margin-left:0}.header-inner{gap:8px}.chart{height:300px}nav button{padding:.5rem}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis article>strong{font-size:1.2rem}}
 
 
-.live-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: .75rem; }
-.live-flow > div { display: grid; gap: .2rem; padding: .75rem; border: 1px solid #aaa; border-radius: .5rem; }
+.header-inner, nav > div, main, footer { max-width: 1800px; }
+.live-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: .65rem; }
+.live-flow > div { display: grid; gap: .2rem; padding: .6rem; border: 1px solid var(--line); border-radius: .5rem; overflow-wrap: anywhere; }
 .live-flow span { font-size: 1.25rem; }
+.data-notes { color: var(--muted); margin-bottom: .75rem; }
+.kpi-label { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .25rem; color: var(--muted); }
+.kpi-info { display: contents; }
+.kpi-info summary { list-style: none; margin: 0; min-width: 24px; min-height: 24px; text-align: center; }
+.kpi-info summary::-webkit-details-marker { display: none; }
+.kpi-info p { grid-column: 1 / -1; margin: 0; font-size: .85rem; }
 progress { width: min(100%, 32rem); height: 1rem; }
-
-@media (min-width: 660px) {
-  .live-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: ". pv ." "grid load battery" ". . soc"; }
-  .live-pv { grid-area: pv; }
-  .live-grid { grid-area: grid; }
-  .live-load { grid-area: load; }
-  .live-battery { grid-area: battery; }
-  .live-soc { grid-area: soc; }
-}
