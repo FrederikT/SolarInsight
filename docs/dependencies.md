@@ -25,5 +25,5 @@ Die .NET-10-LTS-Linie wird laut Microsoft bis November 2028 unterstützt. Postgr
 
 Quellen sind die [Microsoft-Supporttabelle](https://dotnet.microsoft.com/en-us/platform/support/policy), [PostgreSQL-Versionspolitik](https://www.postgresql.org/support/versioning/), [Npgsql-10-Versionshinweise](https://www.npgsql.org/efcore/release-notes/10.0.html) und [Vite-8-Ankündigung](https://v8.vite.dev/blog/announcing-vite8).
 
-Die transitiven Bibliotheken und ihre Integritätswerte sind in den Lockfiles erfasst. Lizenztexte liegen in den jeweiligen NuGet-/npm-Paketen und Basisimages. Die Repository-Lizenz bleibt eine Entscheidung des Eigentümers.
+Die transitiven Bibliotheken und ihre Integritätswerte sind in den Lockfiles erfasst. Lizenztexte liegen in den jeweiligen NuGet-/npm-Paketen und Basisimages. Der Quellcode von Solar Insight steht unter der [MIT-Lizenz](../LICENSE).
 

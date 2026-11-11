@@ -118,5 +118,5 @@ Der vollständige Prüfstand und die einzelnen A01–A25-Kriterien stehen in [do
 - [Provider-Fähigkeiten und Quellen](docs/provider-capabilities.md)
 - [Gepinnte Abhängigkeiten und Lizenzen](docs/dependencies.md)
 
-Die Repository-Lizenz ist noch vom Eigentümer festzulegen.
+Solar Insight steht unter der [MIT-Lizenz](LICENSE). Copyright © 2026 Frederik Thuss.
 
