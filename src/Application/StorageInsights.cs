@@ -31,7 +31,7 @@ public static class StorageInsights
     }
 
     public static StorageProfile Profile(Interval[] rows, Period period, TimeZoneInfo zone, Battery? battery,
-        decimal tolerance, int? detailHour)
+        decimal tolerance, int? detailHour, Func<Interval, Battery?>? limits = null)
     {
         var slots = new Dictionary<(DateOnly Day, int Hour), Slot>();
         var start = Calendar.Utc(period.Start, zone);
@@ -46,7 +46,8 @@ public static class StorageInsights
         decimal socHours = 0, importHours = 0, exportHours = 0, lowerHours = 0, upperHours = 0, lowerKwh = 0, upperKwh = 0;
         foreach (var row in rows)
         {
-            var limit = Limit(row, battery, tolerance);
+            var activeBattery = limits is null ? battery : limits(row);
+            var limit = Limit(row, activeBattery, tolerance);
             bool hasImport = row.Import > EnergyInsights.Tolerance(row);
             bool hasExport = row.Export > EnergyInsights.Tolerance(row);
             if (limit is not null)
@@ -72,7 +73,7 @@ public static class StorageInsights
                 if (row.Import.HasValue) { slot.Import += part.Ticks; slot.HasImport |= hasImport; }
                 if (limit is null) continue;
                 slot.Soc += part.Ticks;
-                slot.SocTicks += Math.Clamp((row.Soc!.Value - battery!.MinSoc) / (battery.MaxSoc - battery.MinSoc), 0, 1) * part.Ticks;
+                slot.SocTicks += Math.Clamp((row.Soc!.Value - activeBattery!.MinSoc) / (activeBattery.MaxSoc - activeBattery.MinSoc), 0, 1) * part.Ticks;
                 slot.Empty |= limit == "lower";
                 slot.Full |= limit == "upper";
                 if (row.Import.HasValue)
@@ -110,7 +111,8 @@ public static class StorageInsights
             hours, detailHour is { } selected ? days.Where(d => d.Hour == selected).OrderBy(d => d.Day).ToArray() : []);
     }
 
-    public static NightDetail Night(Interval[] rows, DateOnly evening, TimeZoneInfo zone, Battery? battery, decimal tolerance)
+    public static NightDetail Night(Interval[] rows, DateOnly evening, TimeZoneInfo zone, Battery? battery,
+        decimal tolerance, Func<Interval, Battery?>? limits = null)
     {
         var local = evening.ToDateTime(new TimeOnly(22, 0));
         var cursor = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, zone));
@@ -122,7 +124,7 @@ public static class StorageInsights
             if (cursor >= end || row.Start > cursor || row.Pv is null) break;
             if (row.Pv > EnergyInsights.Tolerance(row))
                 return new(evening, measured ? hours : null, complete && measured, row.Start);
-            var limit = Limit(row, battery, tolerance);
+            var limit = Limit(row, limits is null ? battery : limits(row), tolerance);
             if (limit is null) complete = false;
             else
             {

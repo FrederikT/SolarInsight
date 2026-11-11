@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useData } from './api'
-import { Chart, chartOptions, colors, date, localDay, number, Panel, pct, stamp, Status } from './components'
+import { bounds, Chart, chartOptions, colors, date, localDay, number, Panel, pct, power, stamp, Status } from './components'
 
 type Ring = { total: number; direct: number; battery: number; grid: number }
 type Frequency = { count: number; eligible: number }
@@ -11,7 +11,7 @@ type HourDay = { day: string; usableSoc: number | null; import: boolean | null; 
   emptyImport: boolean | null; fullExport: boolean | null; expectedHours: number }
 type Point = { start: string; end: string; directKw: number | null; batteryKw: number | null; gridKw: number | null;
   importKw: number | null; exportKw: number | null; soc: number | null; limit: string | null; mix: number | null }
-type Insights = { period: { start: string; end: string; days: number }; zone: string; hours: number; start: string; end: string;
+type Insights = { period: { start: string; end: string; days: number }; zone: string; hours: number; start: string; end: string; knownPaths: boolean;
   latest: string | null; points: Point[]; breakdown: { household: Ring | null; production: Ring | null; validHours: number;
     missingHours: number; rejectedHours: number; rejectedDifferenceKwh: number };
   storage: { lower: Limit; upper: Limit; hours: Hour[]; days: HourDay[] };
@@ -56,34 +56,43 @@ function DayPlots({ data }: { data: Insights }) {
       if (v !== null) values.push([Date.parse(p.end) - 1, key === 'soc' ? v * 100 : v])
       if (data.points[i + 1]?.start !== p.end) values.push([Date.parse(p.end), null])
     })
-    return { name, type: 'line', step: 'end', showSymbol: false, connectNulls: false, data: values }
+    return { name, type: 'line', step: 'end', showSymbol: false, connectNulls: false, data: values,
+      tooltip: { valueFormatter: (value: unknown) => typeof value !== 'number' ? '—' :
+        key === 'soc' ? number(value, 1) + ' %' : power(value) } }
   }
+  const powerAxis = { type: 'value', name: 'Leistung', axisLabel: { formatter: power } }
   const marks = data.points.filter(p => p.limit === 'lower' || p.limit === 'upper').map(p => [
     { xAxis: Date.parse(p.start), itemStyle: { color: p.limit === 'lower' ? 'rgba(168,50,78,.19)' : 'rgba(0,130,105,.19)' } },
     { xAxis: Date.parse(p.end) },
   ])
+  const channels = [['importKw', 'Netzbezug'], ['exportKw', 'Einspeisung'], ['soc', 'Ladezustand']] as const
+  const available = channels.filter(([key]) => data.points.some(point => point[key] != null))
+  const missing = channels.filter(channel => !available.includes(channel)).map(([, name]) => name)
   return <>
     <Panel title="Haushaltslast nach Quelle">
       {data.points.some(p => p.directKw !== null) ? <Chart label="Gestapelte Haushaltslast aus PV, Speicher und Netz" option={{
-        ...base, yAxis: { type: 'value', name: 'kW' }, series: [series('directKw', 'Direkt aus PV'), series('batteryKw', 'Aus dem Speicher'),
+        ...base, yAxis: powerAxis, series: [series('directKw', 'Direkt aus PV'), series('batteryKw', 'Aus dem Speicher'),
           series('gridKw', 'Aus dem Netz')].map(s => ({ ...s, stack: 'load', areaStyle: { opacity: .75 } })),
       }} /> : <p>Keine belastbare Zuordnung der Haushaltslast.</p>}
     </Panel>
     <Panel title="Speicherzustand und Netzleistung am Tag">
-      {data.points.length ? <Chart label="Gemeldeter SOC und Netzleistung auf lokaler Uhrzeitachse" option={{
-        ...base, yAxis: [{ type: 'value', name: 'kW' }, { type: 'value', name: 'Gemeldeter SOC (%)', min: 0, max: 100 }],
-        series: [series('importKw', 'Netzbezug'), series('exportKw', 'Einspeisung'),
-          { ...series('soc', 'Gemeldeter SOC'), yAxisIndex: 1, markArea: { silent: true, data: marks } }],
-      }} /> : <p>Keine Zeitreihen für diesen Tag.</p>}
-      <p>Rote Abschnitte markieren die untere, grüne die obere nutzbare Ladegrenze. Die Kurve zeigt den gemeldeten SOC.</p>
+      {!!missing.length && <p>Keine Minutenmesswerte für {missing.join(', ')}. Tagesenergie in kWh liefert keinen Leistungsverlauf in kW.</p>}
+      {available.length > 0 && <Chart label="Gemeldeter SOC und Netzleistung auf lokaler Uhrzeitachse" option={{
+        ...base, yAxis: [powerAxis, { type: 'value', name: 'Gemeldeter SOC (%)', min: 0, max: 100 }],
+        series: available.map(([key, name]) => key === 'soc' ?
+          { ...series(key, name), yAxisIndex: 1, markArea: { silent: true, data: marks } } : series(key, name)),
+      }} />}
+      {!!marks.length && <p>Rote Abschnitte markieren die untere, grüne die obere nutzbare Ladegrenze.</p>}
       {data.points.some(p => p.mix !== null) && <details><summary>Netzbezugsintervalle am Tag</summary><ul>
-        {data.points.filter(p => p.mix !== null).map(p => <li key={p.start}>{stamp(p.start, data.zone)} · {mixLabels[p.mix!]} · {number(p.gridKw)} kW</li>)}
+        {data.points.filter(p => p.mix !== null).map(p => <li key={p.start}>{stamp(p.start, data.zone)} · {mixLabels[p.mix!]} · {p.gridKw == null ? '—' : power(p.gridKw)}</li>)}
       </ul></details>}
     </Panel>
   </>
 }
 
-export function EnergyInsights({ query, version, drill }: { query: string; version: number; drill: (day: string) => void }) {
+export function EnergyInsights({ query, version, drill, dailyCoverage }: {
+  query: string; version: number; drill: (day: string) => void; dailyCoverage?: number
+}) {
   const [hour, setHour] = useState<number | null>(null)
   const [mix, setMix] = useState<number | null>(null)
   const [offset, setOffset] = useState(0)
@@ -105,14 +114,22 @@ export function EnergyInsights({ query, version, drill }: { query: string; versi
   const firstLabel = pure ? 'Leer' : 'Leer + Netzbezug'
   const secondLabel = pure ? 'Voll' : 'Voll + Einspeisung'
   return <>
+    <Panel title="Energiebilanz im gewählten Zeitraum">
+      <p>{bounds(data.period)} · {data.zone}</p>
+      <dl className="facts">
+        <div><dt>Gemeinsame Tagesabdeckung</dt><dd>{dailyCoverage == null ? 'Keine Sungrow-Tagesaggregate' : pct(dailyCoverage)}</dd></div>
+        <div><dt>Ende des letzten Minutenintervalls mit Messwert</dt><dd>{data.latest ? stamp(data.latest, data.zone) : 'Keine Minutenmesswerte'}</dd></div>
+        <div><dt>Gemeinsam bilanzierbar</dt><dd>{number(breakdown.validHours)} von {number(data.hours)} Stunden ({pct(breakdown.validHours / data.hours)})</dd></div>
+      </dl>
+      {!data.knownPaths && <p>Die Energiepfade der Anlage sind nicht bestätigt.</p>}
+      {breakdown.missingHours > 0 && <p>{number(breakdown.missingHours)} erfasste Stunden ohne vollständige Bilanzgrundlage.</p>}
+      {breakdown.rejectedHours > 0 && <p>{number(breakdown.rejectedHours)} Stunden wegen unplausibler Energiebilanz ausgeschlossen · {number(breakdown.rejectedDifferenceKwh)} kWh absolute Abweichung.</p>}
+      {breakdown.validHours + breakdown.missingHours + breakdown.rejectedHours < data.hours && <p>Für weitere Stunden fehlen Minutenintervalle.</p>}
+    </Panel>
     <div className="energy-rings">
       <EnergyRing title="Woher kam mein Haushaltsstrom?" ring={breakdown.household} labels={['Direkt aus PV', 'Aus dem Speicher', 'Aus dem Netz']} />
       <EnergyRing title="Wohin ging mein PV-Ertrag?" ring={breakdown.production} labels={['Direkt im Haushalt genutzt', 'In den Speicher geladen', 'Ins Netz eingespeist']} />
     </div>
-    <p>Gemeinsam bilanzierbar · {number(breakdown.validHours)} von {number(data.hours)} Stunden ({pct(breakdown.validHours / data.hours)}).
-      {data.latest && <> Letzter abgedeckter Tag · {date(localDay(new Date(Date.parse(data.latest) - 1).toISOString(), data.zone))}.</>}
-      {breakdown.rejectedHours > 0 && <> Ausgeschlossen wegen Bilanzabweichung · {number(breakdown.rejectedHours)} h, {number(breakdown.rejectedDifferenceKwh)} kWh absolute Abweichung.</>}
-      {' '}Null- und Bilanzschwelle · 0,05 kW je Messintervall.</p>
     <Panel title="Zeit an den nutzbaren Ladegrenzen">
       <dl className="facts">{([['Untere Ladegrenze', 'Netzbezug', storage.lower], ['Obere Ladegrenze', 'Einspeisung', storage.upper]] as const)
         .map(([title, grid, limit]) => <div key={title}><dt>{title}</dt><dd>{limit.eligibleHours ?
@@ -140,23 +157,23 @@ export function EnergyInsights({ query, version, drill }: { query: string; versi
       <Panel title="Wiederkehrender nächtlicher Netzbezug">
         <p>Nachtfenster 22:00 bis 06:00 Uhr. Wiederkehrender Bezug an der unteren Ladegrenze ist ein Hinweis für die Speichersimulation.
           Ob mehr Kapazität hilft, hängt auch vom PV-Überschuss zum Laden ab.</p>
-        <Chart label="Nächtlicher Netzbezug entlang der Uhrzeit" click={chooseHour} option={chartOptions(night.map(h => hourRange(h.hour)), 'Nächte', [
+        {night.some(h => h.import.eligible) ? <Chart label="Nächtlicher Netzbezug entlang der Uhrzeit" click={chooseHour} option={chartOptions(night.map(h => hourRange(h.hour)), 'Nächte', [
           { name: 'Mit Netzbezug', data: night.map(h => h.import.eligible ? h.import.count : null) },
           { name: 'Netzbezug an der unteren Ladegrenze', data: night.map(h => h.emptyAmongImports.eligible ? h.emptyAmongImports.count : null) },
-        ])} />
+        ])} /> : <p>Keine auswertbaren Minutenwerte für nächtlichen Netzbezug.</p>}
         <ul>{night.map(h => <li key={h.hour}><button className="link" onClick={() => setHour(h.hour)}>{hourRange(h.hour)}</button>
           {' '}· {frequency(h.import)} Nächten mit Netzbezug · {frequency(h.emptyAmongImports)} Nächten mit Netzbezug und auswertbarem SOC an der unteren Ladegrenze</li>)}</ul>
       </Panel>
       <Panel title="Typischer Tagesverlauf des Speichers">
         <p>Lokale Uhrzeit. Die Kurve zeigt den mittleren Anteil des nutzbaren Speicherfensters.
           Häufigkeiten zählen Tage mit mindestens einem passenden Intervall je auswertbarer Stunde.</p>
-        <Chart label="Mittlerer SOC im nutzbaren Speicherfenster" click={chooseHour} option={chartOptions(storage.hours.map(h => hourLabel(h.hour)), '%', [
+        {storage.hours.some(h => h.usableSoc != null) ? <Chart label="Mittlerer SOC im nutzbaren Speicherfenster" click={chooseHour} option={chartOptions(storage.hours.map(h => hourLabel(h.hour)), '%', [
           { name: 'Nutzbares Speicherfenster', type: 'line', data: storage.hours.map(h => h.usableSoc === null ? null : 100 * h.usableSoc) },
-        ])} />
+        ])} /> : <p>Kein auswertbarer Ladezustand im nutzbaren Speicherfenster. Dafür braucht es SOC-Messwerte und bestätigte Speichergrenzen.</p>}
         <label className="check"><input type="checkbox" checked={pure} onChange={e => setPure(e.target.checked)} /> Reine Speicherzustände anzeigen</label>
-        <Chart label="Häufigkeit der Speicherzustände" click={chooseHour} option={chartOptions(storage.hours.map(h => hourLabel(h.hour)), '%', [
+        {storage.hours.some(h => h[first].eligible || h[second].eligible) ? <Chart label="Häufigkeit der Speicherzustände" click={chooseHour} option={chartOptions(storage.hours.map(h => hourLabel(h.hour)), '%', [
           { name: firstLabel, data: storage.hours.map(h => ratio(h[first])) }, { name: secondLabel, data: storage.hours.map(h => ratio(h[second])) },
-        ])} />
+        ])} /> : <p>Keine auswertbaren Speicherzustände für diese Auswahl.</p>}
         <details><summary>Uhrzeiten und Bezugsgrößen als Tabelle</summary><div className="table"><table><thead><tr>
           <th>Uhrzeit</th><th>SOC und Tage</th><th>{firstLabel}</th><th>{secondLabel}</th></tr></thead><tbody>
           {storage.hours.map(h => <tr key={h.hour}><td><button className="link" onClick={() => setHour(h.hour)}>{hourRange(h.hour)}</button></td>

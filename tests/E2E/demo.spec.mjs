@@ -10,7 +10,8 @@ test('A20/A23 Demo: Zeitraum, Tagesdetail, Speicher, kombinierter Lauf und Expor
   await page.goto('/')
   await expect(page.getByText('Synthetische Demodaten', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Übersicht', exact: true })).toBeVisible()
-  await expect(page.getByText('Abdeckung 100 %').first()).toBeVisible()
+  await page.getByText('Hinweise zur Datengrundlage', { exact: false }).click()
+  await expect(page.getByText(/^Gemeinsame Minutenabdeckung: 100 %/)).toBeVisible()
   if (process.env.SOLAR_SCREENSHOT) {
     await expect(page.getByRole('img', { name: 'Energieverlauf' })).toBeVisible()
     await page.screenshot({ path: process.env.SOLAR_SCREENSHOT, fullPage: true })
@@ -31,6 +32,8 @@ test('A20/A23 Demo: Zeitraum, Tagesdetail, Speicher, kombinierter Lauf und Expor
   const csv = await downloadCsv
   expect(await readFile(await csv.path(), 'utf8')).toContain('PV_kWh')
   await page.getByRole('button', { name: 'Speicher & Potenzial', exact: true }).click()
+  await expect(page.getByRole('img', { name: 'Gemessene Einspeisung nach lokaler Stunde' })).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: 'Im Ladefenster nutzbar (kWh)', exact: true })).toBeVisible()
   await page.getByLabel('Speicher ändern').check()
   await page.getByLabel('Kapazität vor Reserve (kWh)').fill('16')
   await page.getByRole('button', { name: 'Simulation starten' }).click()
@@ -46,7 +49,8 @@ test('A20/A23 Demo: Zeitraum, Tagesdetail, Speicher, kombinierter Lauf und Expor
   expect(json.parameters.shift.daily).toBe(1)
   expect(json.parameters.added.daily).toBe(2)
   await page.getByText('Einzelne Tagesabweichungen').click()
-  await page.getByRole('table').last().getByRole('button').first().click()
+  await page.locator('details').filter({ hasText: 'Einzelne Tagesabweichungen' })
+    .getByRole('table').getByRole('button').first().click()
   await page.getByLabel('Szenario einblenden').check()
   await expect(page.getByRole('heading', { name: 'Tagesdetail', exact: true })).toBeVisible()
   await page.setViewportSize({ width: 375, height: 800 })
@@ -93,6 +97,12 @@ test('A22 Lokale Anmeldung, CSRF, Anlagen- und Tarifpflege', async ({ playwright
     expect((await client.post('/api/v1/auth/login', { data: { password }, headers: { 'X-CSRF': csrf } })).status()).toBe(204)
     expect((await client.get('/api/v1/plant')).status()).toBe(200)
     const headers = { 'X-CSRF': (await (await client.get('/api/v1/auth/session')).json()).csrf }
+    const submittedMapping = await client.put('/api/v1/provider/plant', {
+      headers, data: { plant: '42', mapping: { pv: 83067 } }
+    })
+    expect(submittedMapping.status()).toBe(400)
+    const liveMappingWrite = await client.put('/api/v1/live/mapping', { headers, data: { pv: 13003 } })
+    expect([404, 405]).toContain(liveMappingWrite.status())
     const plant = await client.put('/api/v1/settings/plant', { headers, data: { name: 'Backupfixture',
       zone: 'Europe/Berlin', since: '2026-01-01', pvKwp: 12, battery: null,
       rule: { kw: .1, socTolerance: .02, minutes: 15 } } })

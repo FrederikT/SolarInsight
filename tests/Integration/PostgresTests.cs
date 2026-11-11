@@ -94,6 +94,39 @@ public class PostgresTests
         }
     }
 
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(4, 2)]
+    public async Task EmptyProviderImportStopsWithNoData(int requestedDays, int scannedDays)
+    {
+        using var db = Open();
+        await Importer.Initialize(db, false, default);
+        var plant = new Plant { Id = Guid.NewGuid(), Name = "Leerer Import" };
+        var job = new ImportJob { Id = Guid.NewGuid(), PlantId = plant.Id, Start = Start, Checkpoint = Start,
+            End = Start.AddDays(requestedDays) };
+        db.Plants.Add(plant);
+        db.Imports.Add(job);
+        await db.SaveChangesAsync();
+
+        var provider = new EmptyProvider();
+        for (int day = 1; day < scannedDays; day++)
+            Assert.True(await Importer.Advance(db, job.Id, provider, default));
+        Assert.False(await Importer.Advance(db, job.Id, provider, default));
+        Assert.Equal("failed", job.Status);
+        Assert.Equal("no-data", job.Error);
+        Assert.Equal(Start.AddDays(scannedDays), job.Checkpoint);
+        Assert.Null(job.LastSuccess);
+    }
+
+    sealed class EmptyProvider : IReadProvider, IAggregateProvider
+    {
+        public TimeSpan Window => TimeSpan.FromDays(1);
+        public Task<Interval[]> Read(Guid plant, DateTimeOffset start, DateTimeOffset end, CancellationToken ct) =>
+            Task.FromResult<Interval[]>([]);
+        public Task<Aggregate[]> ReadAggregates(Guid plant, DateTimeOffset start, DateTimeOffset end, CancellationToken ct) =>
+            Task.FromResult<Aggregate[]>([]);
+    }
+
     sealed class Fixture(Queue<Exception> failures) : IReadProvider
     {
         public List<DateTimeOffset> Calls { get; } = [];

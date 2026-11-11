@@ -8,6 +8,14 @@ Bei 401 erneut lokal anmelden beziehungsweise die Sungrow-Autorisierung erneuern
 
 Bei fehlenden Messpunkten bleiben die betroffenen Kanäle unbekannt. Einheitenabweichungen stoppen den Import, statt Werte umzudeuten. Änderungen an bestehenden Zuordnungen oder der Anlagenzeitzone werden nach dem ersten Datenimport abgelehnt. Sie benötigen eine bewusst geplante Datenmigration.
 
+### Historischer Sungrow-Import ohne Daten
+
+1. In iSolarCloud einen abgeschlossenen Tag mit sichtbarer PV-Leistung wählen und unter **Einstellungen → Diagnose und Messpunkte** die historische Probe ausführen. Bei vorhandenem Minutenprofil steht unter **Datenstatus → Nachimport und Testimport** zusätzlich der kurze Testimport zur Verfügung. Für Momentanwerte braucht die Berechnung benachbarte Werte im bestätigten Raster.
+2. Bei `no-data` die Zeile `Sungrow-Minutenimport` im App-Protokoll prüfen. `Anlagenreihe Undefined` bedeutet, dass der Antwort kein Feld für die angefragte Anlage entnommen werden konnte. Nichtleere Arrays oder Objekte neben dem Messpunktwörterbuch zeigen, dass es weitere Strukturen zu prüfen gibt. Ein im Wörterbuch vorhandener Leistungspunkt belegt seine Einheit, aber keine historische Messreihe. Bei erneut leerer Antwort die historische Verfügbarkeit dieses Messpunkts für Anlage und App mit Sungrow prüfen.
+3. Erst nach einem Test mit verwertbaren Intervallen ganze Tage importieren. Das Enddatum ist exklusiv. Die gemeinsame Abdeckung misst PV und Hausverbrauch im selben Intervall. Eine allein zugeordnete PV-Reihe kann daher bei 0 % gemeinsamer Abdeckung erfolgreich sein.
+
+Die Diagnose enthält nur angefragte Messpunktnummern, Zeitfenster, Strukturtypen und Anzahlen. Fehlgeschlagene leere Testimporte blockieren einen neuen Testauftrag nicht.
+
 ## Rechte für Compose-Secrets
 
 Dateibasierte Compose-Secrets werden eingebunden. Die Anwendung läuft als Benutzer app und muss die gemounteten Dateien lesen können. Auf einem POSIX-Host den Ordner secrets mit Modus 0700 schützen und die enthaltenen Dateien für das Container-Mapping mit Modus 0644 bereitstellen. Andere Hostbenutzer können den Ordner dadurch nicht betreten. Unter Windows den Ordner per ACL auf das Betreiberkonto und den Docker-Dienst begrenzen.
@@ -70,3 +78,63 @@ Migrationen werden beim Start angewendet. Der versionierte EF-Modellsnapshot erm
 
 Ausgelegt für mindestens zwei Kerne und 4 GB RAM. Die Anwendung begrenzt API-Requests pro IP, zwei parallele Rechenjobs, acht wartende Jobs, 32 kurzlebige Ergebnisse und 60 Sekunden Rechenzeit pro Job. Zeitraumabfragen sind auf 732 Tage, Simulationen auf 366 Tage begrenzt. Tagesdaten bleiben klein. Langzeitdiagramme erhalten Tages-/Monatsaggregate.
 
+
+
+## Live-Übersicht und gezielte Historienabstimmung
+
+Bei der ersten Anlagenaktivierung plant Solar Insight automatisch die letzten 30 abgeschlossenen Kalendertage ein. `SUNGROW_INITIAL_HISTORY_DAYS` erlaubt 1 bis 366 Tage. `SUNGROW_DEFAULT_ZONE` belegt die Zeitzone für neue Anlagen vor und verwendet standardmäßig Europe/Berlin. Existiert ein ganztägiger Importauftrag, bleibt er auch nach Neustart, erneuter Bestätigung oder Abbruch die Referenz für die erstmalige Einplanung. Einen fehlgeschlagenen oder abgebrochenen Zeitraum unter **Datenstatus → Nachimport und Testimport** gezielt erneut einplanen.
+
+Für einen manuellen Import zuerst **Dauer schätzen** und anschließend **Import einplanen** wählen. Antwortzeiten, Zeitzonenwechsel, Wiederholungen und zusätzliche Authentifizierungsaufrufe können den Lauf verlängern. Während des Imports zeigt der Balken den Anteil zwischen Beginn und Ende bis zum letzten gespeicherten Checkpoint. Ab zwei abgeschlossenen Fenstern nutzt die Restzeit das beobachtete Tempo einschließlich Wartezeiten. Fenster, leere Antworten, Minutenintervalle und Tageswerte werden getrennt gezählt. **Import abbrechen** beendet einen ausstehenden oder laufenden Auftrag. Bereits abgeschlossene Fenster bleiben erhalten.
+
+Nach einem erfolgreich abgeschlossenen Import ganzer Tage untersucht der Hintergrunddienst abgeschlossene Kalendertage in der Anlagenzeitzone. Minutenlücken werden im bestätigten Raster in zulässige Fenster gebündelt. Fehlende Tagesaggregate werden separat nachgeladen. Der Dienst prüft vor jedem Abruf erneut die Datenbank und ergänzt bei gleicher Quelle, Auflösung und Zeitgrenze nur fehlende Kanäle. Bei abweichender Qualität ist ein vollständiger Ersatz mit identischen Zeitgrenzen erforderlich. Er priorisiert aktuelle Live-Abrufe. Nach drei erfolglosen Versuchen erscheint die Lücke als offen. Ein späterer manueller Import kann sie schließen. Offene Lücken werden lokal erneut geprüft, ohne weitere Cloud-Aufrufe auszulösen. Standardwerte sind ein täglicher Scan und 24 Stunden zwischen Wiederholungen. `SUNGROW_HISTORY_RETRY_HOURS` erlaubt 24 bis 48 Stunden.
+
+Unter **Einstellungen → Diagnose und Messpunkte** ist die aktive Live-Zuordnung lesbar. Die Live-Probe verwendet das bestätigte Betreiberprofil. Fehlende Kanäle bleiben unbekannt. Für alle Tabs und den Heimnetz-Endpunkt gibt es einen gemeinsamen Cache je App-Instanz. Die Übersicht signalisiert alle 30 Sekunden Sichtbarkeit und liest den Cache. Die Sichtbarkeitsfrist endet nach 70 Sekunden ohne Signal. Der Hintergrundtakt liegt standardmäßig bei 600 Sekunden. Der 30–60-Sekunden-Takt bei sichtbarer Übersicht gilt für Cache und Aktivität. Für die aktuelle Sungrow-Quelle gilt dabei die dokumentierte Untergrenze von 300 Sekunden zwischen Live-Cloud-Abfragen. Der Untergrenzenwert kann erhöht werden. Bei Fehlern verzögert ein gestaffelter Wiederanlauf die nächste Abfrage und beachtet `Retry-After`. Ein bestätigter Messwert wird nach standardmäßig 900 Sekunden als veraltet angezeigt.
+
+Der Tagesverlauf unterscheidet gespeicherte Momentwerte von historischen Intervallwerten. Historische Intervalle haben für einen abgedeckten Kanal und Zeitraum Vorrang. Ein unverifizierter oder fehlender Kanal wird dadurch nicht ersetzt. Die Live-Stichproben und ihre Lücken bleiben gespeichert. Momentwerte fließen nicht in Energie, Tarife oder Simulation ein. Der Sonnenüberschuss erscheint nur bei gemessener Einspeisung, gemeinsamem plausiblen Fluss und bestätigtem Ausschluss von Batterieexport. Die historische Sungrow-Route liefert nur abgeschlossene Tage. Der laufende Tag zeigt daher normalerweise Live-Stichproben.
+
+### Betreiberprofil für Messpunkte
+
+Für eine neue Anlage verwendet Solar Insight die veröffentlichten Tagespunkte für PV, Verbrauch, Bezug und Einspeisung. Die Verfügbarkeit hängt von der Anlage und ihrem API-Paket ab. Minuten-, Live- und EMS-Speicherkanäle brauchen eine Bestätigung an der konkreten Anlage. Bereits gespeicherte Profile bleiben ohne Betreiberdatei erhalten.
+
+Optional eine lokale JSON-Datei schreibgeschützt einbinden und den Pfad über `Sungrow__MappingFile` setzen. Bei Compose lässt sich das über ein eigenes Override ergänzen.
+
+```yaml
+services:
+  app:
+    environment:
+      Sungrow__MappingFile: /etc/solar-insight/sungrow-mapping.json
+    volumes:
+      - ./secrets/sungrow-mapping.json:/etc/solar-insight/sungrow-mapping.json:ro
+```
+
+Die oberste Eigenschaft ist die Sungrow-Anlagen-ID. Diese Form zeigt ein reines Tagesprofil mit den Standardpunkten.
+
+```json
+{
+  "123456": {
+    "pv": null, "load": null, "grid": null, "battery": null, "soc": null,
+    "positiveGridIsImport": true, "positiveBatteryIsCharge": true,
+    "instantaneous": true, "endStamped": false, "socPercent": true,
+    "confirmedAcPaths": false, "stepMinutes": 5,
+    "daily": { "pv": 83022, "load": 83118, "import": 83102, "export": 83072, "charge": null, "discharge": null }
+  }
+}
+```
+
+Minutenpunkte und die Regeln für Vorzeichen, SOC und Zeitstempel explizit angeben. Ein optionales `live`-Objekt benötigt `deviceKey`, die fünf Kanäle (unbekannt als `null`), `positiveGridIsImport`, `positiveBatteryIsCharge`, `socPercent` und `confirmed: true`. Optional sind `gridExport`, `batteryDischarge` und `batteryExportExcluded`. Erst nach Abgleich von Messort, Richtung, Zeitskala und Einheiten mit iSolarCloud übernehmen. Alle bestätigten Werte verwenden. Anlagenspezifische Profile gehören lokal in die Betreiberkonfiguration.
+
+Nach Änderung der Datei unter **Einstellungen → Anlage wechseln oder Betreiberprofil anwenden** dieselbe Anlage erneut aktivieren. Ergänzende Tages- und Live-Kanäle können hinzugefügt werden. Änderungen an den Grundlagen bereits gespeicherter Daten erfordern eine Datenmigration. Der normale Setup-Endpunkt nimmt keine Messpunktzuordnung entgegen.
+
+Die optionalen Live-Punkte `pvDc` und `inverterActive` erscheinen getrennt von der AC-Flussbilanz. Für das geprüfte Hybridgerät sind dies 13003 (PV-DC-Leistung am Wechselrichter) und 13011 (Wechselrichter-Wirkleistung).
+
+Für ein geprüftes Gerätezählerprofil kann `deviceCounters: true` gesetzt werden. `POST /api/v1/provider/device-counters/backfill` liefert im angemeldeten Betreiberzugriff mit CSRF-Schutz zunächst eine Vorschau. Der Body enthält `device`, `day`, `start`, `end` und `stepMinutes`. Gerät und Raster müssen dem aktiven Profil entsprechen. Erst `?apply=true` schreibt den begrenzten Zeitraum. Für jeden Kanal sind zwei direkt benachbarte Zählerstände in Wh oder kWh und Leistungstelemetrie an beiden Grenzen erforderlich. Rücksetzungen, überhöhte Sprünge und widersprüchliche Tageskontrollen führen zu ausgelassenen Intervallen beziehungsweise einem übersprungenen Fenster. Zählerdifferenzen werden nicht auf Lücken verteilt. Die Quelle erscheint im Bericht getrennt von trapezförmig geschätzten Energien.
+
+Das bestätigte Profil aktiviert zugleich den Hintergrundimport. Der Dienst beginnt einmalig mit den letzten 30 abgeschlossenen lokalen Kalendertagen und prüft danach neu abgeschlossene Tage. Er fragt höchstens ein Gerätefenster von bis zu drei Stunden pro Minute ab und speichert den Fortschritt in PostgreSQL. Der gemeinsame Sungrow-Abrufabstand und Anbieterwartezeiten gelten auch dafür. Beim jüngsten abgeschlossenen Tag endet die Abfrage vor dem aktuellen Tag, den die Historienroute ausschließt. Mehrdeutige lokale Zeiten beim Herbstwechsel bleiben offen. Ein bestätigter Zählerwert über einer Lücke erscheint als separate Summe. Der historisch verfügbare, bestätigte SOC-Punkt erscheint im Tagesdetail als Stichprobe.
+
+### Lesender Heimnetz-Zugang
+
+Der Endpunkt `GET /api/v1/lan/now` ist standardmäßig deaktiviert. Für den Betrieb das Overlay `-f compose.lan.yaml` zur privaten Compose-Konfiguration ergänzen. `SOLAR_LAN_ENABLED=true`, `SOLAR_LAN_NETWORK` als konkretes CIDR des Heimnetzes und `SOLAR_LAN_KEY_SECRET` als Pfad zu einer lokalen Datei mit einem separaten zufälligen Leseschlüssel setzen. Ein 32-Byte-Zufallswert in Hex erfüllt die Dateivorgabe. Der Client übergibt `Authorization: Bearer <Leseschlüssel>`. Schlüssel gehören ausschließlich in die Secret-Datei und den Smart-Home-Secret-Speicher.
+
+Der Compose-Port bleibt an Loopback gebunden. Für Geräte im Heimnetz den Pfad über einen lokalen HTTPS-Reverse-Proxy freigeben und nur den konkreten Proxy als `SOLAR_TRUSTED_PROXY` konfigurieren. Er muss die Clientadresse als `X-Forwarded-For` weiterreichen und fremde Forwarding-Header verwerfen. Die API prüft diese Adresse gegen das konfigurierte CIDR. Der vorhandene HTTPS-Schutz gilt auch für den Heimnetz-Endpunkt. Der Schlüssel gewährt keinen Zugriff auf Einstellungen oder Importaktionen.
+
+Die Antwort enthält unter `grid` vorzeichenbehaftete kW (`value`), `direction` (`import`, `export`, `idle` oder `unknown`), `measuredAt`, `ageSeconds` und `quality`. Bei `unknown` ist `value` null. Positive Netzleistung ist Bezug, negative Leistung Einspeisung. Aufrufe lesen ausschließlich den Cache oder dessen Datenbankstand nach einem Neustart.

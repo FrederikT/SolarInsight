@@ -9,19 +9,27 @@ namespace SolarInsight.Api;
 public record AppKeys(string AppKey, string AccessKey, string Redirect);
 public record LiveTokens(string Access, string Refresh, DateTimeOffset Expires);
 public record AuthorizedPlant(string Id, string Name);
-public record LiveActivation(string Plant, string Zone, SungrowMapping Mapping, string? Name = null);
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+public record LiveActivation(string Plant, string? Zone = null, int Page = 1);
 
 public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionProvider protection,
-    SungrowDiscovery sungrow, IConfiguration configuration, RuntimeOptions runtime) : IReadProvider, IAggregateProvider
+    SungrowDiscovery sungrow, IConfiguration configuration, RuntimeOptions runtime, ILogger<LiveProvider> logger)
+    : IHistorySource, IDeviceCounterSource
 {
     readonly IDataProtector protector = protection.CreateProtector("sungrow-tokens-v1");
     readonly SemaphoreSlim authLock = new(1, 1);
     readonly SemaphoreSlim apiLock = new(1, 1);
     DateTimeOffset nextCall;
+    int liveWaiting;
+    readonly SemaphoreSlim liveLock = new(1, 1);
+    DateTimeOffset nextLiveCall;
+    bool liveSlotUsedByProbe;
+    (Guid Plant, LiveMapping Mapping, LiveBatch Batch)? lastLive;
+    public int LiveMinCloudSeconds => Math.Clamp(configuration.GetValue("Sungrow:LiveMinCloudSeconds", 300), 300, 86400);
     public TimeSpan Window => TimeSpan.FromMinutes(165);
     public bool Configured => !runtime.Demo && configuration["Sungrow:AppFile"] is { } file && File.Exists(file);
 
-    public int CallSpacingSeconds => Math.Clamp(configuration.GetValue("Sungrow:CallSpacingSeconds", 45), 1, 86400);
+    public int CallSpacingSeconds => Math.Clamp(configuration.GetValue("Sungrow:CallSpacingSeconds", 15), 1, 86400);
     public int RefreshMinutes => Math.Clamp(configuration.GetValue("Sungrow:RefreshMinutes", 1440), 60, 10080);
 
     AppKeys Keys()
@@ -32,7 +40,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             var keys = JsonSerializer.Deserialize<AppKeys>(File.ReadAllText(configuration["Sungrow:AppFile"]!),
                 new JsonSerializerOptions(JsonSerializerDefaults.Web));
             if (keys is null || string.IsNullOrWhiteSpace(keys.AppKey) || string.IsNullOrWhiteSpace(keys.AccessKey) ||
-                !Uri.TryCreate(keys.Redirect, UriKind.Absolute, out var uri) || uri.Scheme != "https")
+                !Uri.TryCreate(keys.Redirect, UriKind.Absolute, out var uri) || !SungrowDiscovery.IsAllowedRedirect(uri))
                 throw new ArgumentException("Ungültige serverseitige Sungrow-App-Konfiguration.");
             return keys;
         }
@@ -42,17 +50,29 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         }
     }
 
-    async Task<JsonElement> Send(Func<CancellationToken, Task<JsonElement>> call, CancellationToken ct)
+    async Task<JsonElement> Send(Func<CancellationToken, Task<JsonElement>> call, CancellationToken ct, bool priority = false)
     {
-        await apiLock.WaitAsync(ct);
+        while (true)
+        {
+            await apiLock.WaitAsync(ct);
+            var wait = nextCall - DateTimeOffset.UtcNow;
+            if (wait <= TimeSpan.Zero && (priority || Volatile.Read(ref liveWaiting) == 0)) break;
+            apiLock.Release();
+            if (wait > TimeSpan.FromMinutes(2)) throw new ProviderFailure("rate-limit", true, wait);
+            await Task.Delay(wait > TimeSpan.Zero ? wait : TimeSpan.FromMilliseconds(100), ct);
+        }
         try
         {
-            var wait = nextCall - DateTimeOffset.UtcNow;
-            if (wait > TimeSpan.Zero) await Task.Delay(wait, ct);
             nextCall = DateTimeOffset.UtcNow.AddSeconds(CallSpacingSeconds);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(25));
             try { return await call(timeout.Token); }
+            catch (ProviderFailure failure) when (failure.Category == "rate-limit" && failure.RetryAfter is { } retry)
+            {
+                var resume = DateTimeOffset.UtcNow + retry;
+                if (resume > nextCall) nextCall = resume;
+                throw;
+            }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new TimeoutException(); }
         }
         finally { apiLock.Release(); }
@@ -93,7 +113,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         await db.SaveChangesAsync(ct);
     }
 
-    async Task<(AppKeys Keys, string Token)> Access(CancellationToken ct)
+    async Task<(AppKeys Keys, string Token)> Access(CancellationToken ct, bool priority = false)
     {
         var keys = Keys();
         await authLock.WaitAsync(ct);
@@ -115,7 +135,7 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             }
             if (tokens.Expires <= DateTimeOffset.UtcNow.AddMinutes(1))
             {
-                var raw = await Send(c => sungrow.Refresh(keys.AppKey, keys.AccessKey, tokens.Refresh, c), ct);
+                var raw = await Send(c => sungrow.Refresh(keys.AppKey, keys.AccessKey, tokens.Refresh, c), ct, priority);
                 tokens = ParseTokens(raw);
                 await SaveTokens(db, tokens, ct);
             }
@@ -141,11 +161,10 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
 
     public async Task Activate(LiveActivation input, CancellationToken ct)
     {
-        if (input.Plant is null || input.Plant.Length is < 1 or > 30 || !input.Plant.All(char.IsAsciiDigit) ||
-            input.Zone is null || !input.Zone.Contains('/') || !TimeZoneInfo.TryFindSystemTimeZoneById(input.Zone, out _))
-            throw new ArgumentException("Anlage oder Zeitzone ungültig.");
-        if (input.Mapping is null) throw new ArgumentException("Messpunktzuordnung fehlt.");
-        input.Mapping.Validate();
+        if (input.Plant is null || input.Plant.Length is < 1 or > 30 || !input.Plant.All(char.IsAsciiDigit))
+            throw new ArgumentException("Eine autorisierte Anlage auswählen.");
+        var authorized = (await Plants(input.Page, ct)).FirstOrDefault(p => p.Id == input.Plant)
+            ?? throw new ArgumentException("Die Anlage ist nicht autorisiert. Anlagenliste neu laden.");
         var (keys, token) = await Access(ct);
         var devices = new Dictionary<string, (string Model, string Type)>();
         for (int page = 1; page <= 10; page++)
@@ -167,23 +186,51 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         }
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Store>();
+        var setup = scope.ServiceProvider.GetRequiredService<SungrowSetup>();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(702928349)", ct);
-        var plant = await db.Plants.SingleOrDefaultAsync(p => p.ProviderId == input.Plant, ct);
-        var settings = JsonSerializer.Serialize(input.Mapping);
+        var plantId = await db.Plants.Where(p => p.ProviderId == input.Plant).Select(p => (Guid?)p.Id).SingleOrDefaultAsync(ct);
+        Plant? plant = null;
+        if (plantId is { } existingId)
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT pg_advisory_xact_lock(hashtextextended({existingId.ToString()}, 0))""", ct);
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT pg_advisory_xact_lock(hashtextextended({existingId.ToString()}, 1))""", ct);
+            plant = await Endpoints.LockPlant(db, existingId, ct);
+        }
+        var zone = input.Zone ?? plant?.Zone ?? setup.DefaultZone;
+        if (!zone.Contains('/') || !TimeZoneInfo.TryFindSystemTimeZoneById(zone, out _))
+            throw new ArgumentException("Ungültige Anlagenzeitzone. Eine IANA-Zeitzone wie Europe/Berlin angeben.");
+        var connection = plant is null ? null : await db.Connections.FindAsync([plant.Id], ct);
+        var old = connection is null ? null : JsonSerializer.Deserialize<SungrowMapping>(connection.Capabilities);
+        var mapping = setup.Resolve(input.Plant, old);
+        if (mapping.Live != old?.Live && mapping.Live is { } live && !devices.ContainsKey(live.DeviceKey))
+            throw new ArgumentException("Das Live-Gerät im Betreiberprofil gehört nicht zur ausgewählten Anlage.");
         if (plant is not null)
         {
-            var previous = await db.Connections.FindAsync([plant.Id], ct);
+            bool changed = old != mapping || plant.Zone != zone;
+            if (changed && await db.Imports.AnyAsync(j => j.PlantId == plant.Id &&
+                (j.Status == "pending" || j.Status == "running"), ct))
+                throw new ArgumentException("Die Konfiguration kann nach Ende des laufenden Imports angewendet werden.");
             bool data = await db.Readings.AnyAsync(r => r.PlantId == plant.Id, ct) ||
                 await db.Aggregates.AnyAsync(a => a.PlantId == plant.Id, ct);
-            if (data && (previous?.Capabilities != settings || plant.Zone != input.Zone))
+            var added = mapping.Daily;
+            bool additive = old is not null && (old with { Daily = added, Live = mapping.Live,
+                DeviceCounters = mapping.DeviceCounters }) == mapping &&
+                (old.Daily?.Fields.All(field => added?.Fields.Contains(field) == true) ?? true);
+            if (data && (!additive || plant.Zone != zone))
                 throw new ArgumentException("Eine Änderung der Messpunktzuordnung oder Zeitzone erfordert eine separate Datenmigration.");
+            if ((plant.Zone != zone || old?.Live is { } previous && mapping.Live?.Extends(previous) != true) &&
+                await db.LiveMeasurements.AnyAsync(m => m.PlantId == plant.Id, ct))
+                throw new ArgumentException("Eine Änderung bereits erfasster Live-Werte erfordert eine separate Datenmigration.");
+            if (changed) plant.Revision++;
         }
         await db.Plants.Where(p => p.Active).ExecuteUpdateAsync(s => s.SetProperty(p => p.Active, false), ct);
         if (plant is null)
         {
-            plant = new Plant { Id = Guid.NewGuid(), Name = input.Name is { Length: > 0 and <= 100 } ? input.Name : "Sungrow-Anlage",
-                ProviderId = input.Plant, Zone = input.Zone,
+            plant = new Plant { Id = Guid.NewGuid(), Name = authorized.Name is { Length: > 0 and <= 100 } ? authorized.Name : "Sungrow-Anlage",
+                ProviderId = input.Plant, Zone = zone,
                 Active = true, Revision = 1 };
             db.Plants.Add(plant);
         }
@@ -191,22 +238,82 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         {
             plant.Active = true;
             db.Entry(plant).Property(p => p.Active).IsModified = true;
-            plant.Zone = input.Zone;
-            plant.Revision++;
+            plant.Zone = zone;
         }
-        var connection = await db.Connections.FindAsync([plant.Id], ct);
-        var metadata = new ProviderConnection(plant.Id, "mapped", "", settings);
+        var metadata = new ProviderConnection(plant.Id, "mapped", "", JsonSerializer.Serialize(mapping));
         if (connection is null) db.Connections.Add(metadata);
         else db.Entry(connection).CurrentValues.SetValues(metadata);
-        foreach (var (id, info) in devices)
+        foreach (var (deviceId, info) in devices)
         {
-            var existing = await db.Devices.FindAsync([plant.Id, id], ct);
-            var metadataDevice = new Device(plant.Id, id, info.Model, info.Type);
+            var existing = await db.Devices.FindAsync([plant.Id, deviceId], ct);
+            var metadataDevice = new Device(plant.Id, deviceId, info.Model, info.Type);
             if (existing is null) db.Devices.Add(metadataDevice);
             else db.Entry(existing).CurrentValues.SetValues(metadataDevice);
         }
+        await setup.PlanInitial(db, plant, DateTimeOffset.UtcNow, ct);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+    }
+
+    public async Task<LiveBatch> ReadNow(Plant plant, LiveMapping mapping, CancellationToken ct)
+    {
+        await liveLock.WaitAsync(ct);
+        try
+        {
+            var identity = mapping with { Confirmed = false, BatteryExportExcluded = false };
+            var now = DateTimeOffset.UtcNow;
+            if (now < nextLiveCall)
+            {
+                if (liveSlotUsedByProbe)
+                    throw new ProviderFailure("diagnostic-cooldown", true, nextLiveCall - now);
+                if (lastLive is { } previous && previous.Plant == plant.Id && previous.Mapping == identity)
+                    return previous.Batch;
+                throw new ProviderFailure("rate-limit", true, nextLiveCall - now);
+            }
+            lastLive = null;
+            var raw = await ReadDeviceNow(mapping.DeviceKey, mapping.Points, false, ct);
+            var batch = LiveNormalization.Map(raw, plant.ProviderId!, mapping,
+                TimeZoneInfo.FindSystemTimeZoneById(plant.Zone), DateTimeOffset.UtcNow);
+            lastLive = (plant.Id, identity, batch);
+            return batch;
+        }
+        finally { liveLock.Release(); }
+    }
+
+    async Task<JsonElement> ReadDeviceNow(string device, IEnumerable<int> points, bool probe, CancellationToken ct)
+    {
+        // Take the token lock before claiming priority so a concurrent token refresh can finish.
+        var (keys, token) = await Access(ct, priority: true);
+        Interlocked.Increment(ref liveWaiting);
+        try
+        {
+            return await Send(c =>
+            {
+                nextLiveCall = DateTimeOffset.UtcNow.AddSeconds(LiveMinCloudSeconds);
+                liveSlotUsedByProbe = probe;
+                return sungrow.DeviceNow(keys.AppKey, keys.AccessKey, token, device, points, c);
+            }, ct, priority: true);
+        }
+        finally { Interlocked.Decrement(ref liveWaiting); }
+    }
+
+    public async Task<PointProbeResult> ProbeLive(Plant plant, string device, ProbePoint[] points, CancellationToken ct)
+    {
+        const string source = "Geräte-Livewerte";
+        await liveLock.WaitAsync(ct);
+        try
+        {
+            var remaining = nextLiveCall - DateTimeOffset.UtcNow;
+            if (remaining > TimeSpan.Zero) throw new ProviderFailure("rate-limit", true, remaining);
+            var raw = await ReadDeviceNow(device, points.Select(point => point.Id), true, ct);
+            return PointProbe.DeviceNow(raw, plant.ProviderId!, device, points,
+                TimeZoneInfo.FindSystemTimeZoneById(plant.Zone), DateTimeOffset.UtcNow);
+        }
+        catch (ProviderFailure failure)
+        {
+            return PointProbe.Failed(source, points, DateTimeOffset.UtcNow, failure);
+        }
+        finally { liveLock.Release(); }
     }
 
     public async Task<Interval[]> Read(Guid plantId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
@@ -244,19 +351,145 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
             }
             return collected.ToArray();
         }
-        var raw = await Send(c => sungrow.Minutes(keys.AppKey, keys.AccessKey, token, plant.ProviderId!, mapping.Points,
-            start, queryEnd, zone, c, step), ct);
-        return SungrowNormalization.Map(raw, plant.ProviderId!, mapping, zone, start, end);
+        try
+        {
+            var raw = await Send(c => sungrow.Minutes(keys.AppKey, keys.AccessKey, token, plant.ProviderId!, mapping.Points,
+                start, queryEnd, zone, c, step), ct);
+            return SungrowNormalization.Map(raw, plant.ProviderId!, mapping, zone, start, end, summary =>
+                logger.Log(summary.Intervals == 0 ? LogLevel.Warning : LogLevel.Information,
+                    "Sungrow-Minutenimport {Start:O} bis {End:O}, Punkte {Points}, Schritt {Step}: " +
+                    "Antwort {Payload}, Anlagenreihe {Series}, Wörterbuch {Dictionary}, Rohzeilen {RawRows}, " +
+                    "gültige Zeitstempel {Timestamps}, Leistungspunkte mit W/kW {Units}, verwertbare Intervalle {Intervals}, " +
+                    "weitere nichtleere Arrays {OtherArrays}, weitere Objekte {OtherObjects}",
+                    localStart, localEnd, string.Join(",", mapping.Points), step, summary.Payload, summary.PlantSeries,
+                    summary.PointDictionary, summary.RawSamples, summary.ValidTimestamps, summary.PowerPointsWithKnownUnit,
+                    summary.Intervals, summary.OtherNonemptyArrays, summary.OtherObjects));
+        }
+        catch (ProviderFailure failure)
+        {
+            logger.LogWarning("Sungrow-Minutenimport {Start:O} bis {End:O}: {Category}, HTTP {HttpStatus}, Sungrow-Code {ResultCode}",
+                localStart, localEnd, failure.Category, failure.HttpStatus, failure.ResultCode);
+            throw;
+        }
+    }
+
+    const int ProbeStep = 15;
+
+    internal static (DateTimeOffset Start, DateTimeOffset End) ProbeWindow(DateOnly day, TimeOnly first, TimeOnly last,
+        TimeZoneInfo zone, int step = ProbeStep)
+    {
+        if (step is not (5 or 15)) throw new ArgumentException("Das Raster muss 5 oder 15 Minuten betragen.");
+        var today = Calendar.Day(DateTimeOffset.UtcNow, zone);
+        if (day >= today)
+            throw new ArgumentException("Einen abgeschlossenen Tag wählen.");
+        var from = day.ToDateTime(first);
+        var to = last == TimeOnly.MinValue && first != TimeOnly.MinValue
+            ? day.AddDays(1).ToDateTime(last) : day.ToDateTime(last);
+        if (to <= from || to - from > TimeSpan.FromHours(3) ||
+            first.Ticks % TimeSpan.FromMinutes(step).Ticks != 0 ||
+            last.Ticks % TimeSpan.FromMinutes(step).Ticks != 0)
+            throw new ArgumentException($"Ein Fenster bis drei Stunden im {step}-Minuten-Raster an einem abgeschlossenen Tag wählen.");
+        if (zone.IsInvalidTime(from) || zone.IsInvalidTime(to) || zone.IsAmbiguousTime(from) ||
+            zone.IsAmbiguousTime(to) || zone.GetUtcOffset(from) != zone.GetUtcOffset(to))
+            throw new ArgumentException("Ein Zeitfenster außerhalb der Zeitumstellung wählen.");
+        return (TimeZoneInfo.ConvertTimeToUtc(from, zone), TimeZoneInfo.ConvertTimeToUtc(to, zone));
+    }
+
+    public async Task<PointProbeResult> ProbeDeviceMinutes(Plant plant, DeviceHistoryProbeRequest input,
+        ProbePoint[] points, CancellationToken ct)
+    {
+        string source = $"Gerätehistorie · {input.StepMinutes} Minuten";
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
+        var (start, end) = ProbeWindow(input.Day, input.Start, input.End, zone, input.StepMinutes);
+        try
+        {
+            return await ReadDeviceHistory(plant, input.Device, points, start, end, input.StepMinutes, ct);
+        }
+        catch (ProviderFailure failure)
+        {
+            return PointProbe.Failed(source, points, DateTimeOffset.UtcNow, failure);
+        }
+    }
+
+    public async Task<PointProbeResult> ReadDeviceHistory(Plant plant, string device, ProbePoint[] points,
+        DateTimeOffset start, DateTimeOffset end, int step, CancellationToken ct)
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
+        var (keys, token) = await Access(ct);
+        var raw = await Send(c => sungrow.DeviceMinutes(keys.AppKey, keys.AccessKey, token, device,
+            points.Select(point => point.Id).ToArray(), start, end, zone, c, step), ct);
+        return PointProbe.Minutes($"Gerätehistorie · {step} Minuten", raw, device, points,
+            zone, start, end, DateTimeOffset.UtcNow);
+    }
+
+    public async Task<object> Probe(Plant plant, ProbeRequest input, CancellationToken ct)
+    {
+        if (plant.ProviderId is not { } id) throw new ArgumentException("Keine Sungrow-Anlage ausgewählt.");
+        var day = input.Day;
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
+        if (input.Start.HasValue != input.End.HasValue)
+            throw new ArgumentException("Start- und Endzeit gemeinsam angeben.");
+        var (start, end) = ProbeWindow(day, input.Start ?? new TimeOnly(11, 0), input.End ?? new TimeOnly(13, 0), zone);
+        var (keys, token) = await Access(ct);
+        ProbePoint[] candidates =
+        [
+            new(83067, "PV-Kandidat", "power"), new(83033, "Anlagenwirkleistung", "power"),
+            new(83052, "Lastkandidat", "power"), new(83106, "Hausverbrauch", "power"),
+            new(83549, "Netzleistung", "power"), new(83238, "Batterieleistung", "power"), new(83129, "Ladezustand", "soc")
+        ];
+        var minutePoints = candidates.Select(point => point.Id).ToArray();
+        int[] dayPoints = [83022, 83118, 83072, 83102, 83322, 83323];
+        var minute = await Send(c => sungrow.Minutes(keys.AppKey, keys.AccessKey, token, id,
+            minutePoints, start, end, zone, c, ProbeStep), ct);
+        var minuteReport = PointProbe.Minutes("Anlagenhistorie · 15 Minuten", minute, id, candidates,
+            zone, start, end, DateTimeOffset.UtcNow);
+        var daily = await Send(c => sungrow.Days(keys.AppKey, keys.AccessKey, token, id, dayPoints, day, day, c), ct);
+        JsonElement Series(JsonElement data) =>
+            data.ValueKind == JsonValueKind.Object && data.TryGetProperty(id, out var series) ? series : default;
+        static bool HasNumber(JsonElement value) => decimal.TryParse(value.ToString(),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _);
+        var minuteSeries = Series(minute);
+        var daySeries = Series(daily);
+        return new
+        {
+            minuteReport,
+            minutes = minutePoints.Select(point => new { point, samples = minuteSeries.ValueKind == JsonValueKind.Array
+                ? minuteSeries.EnumerateArray().Count(row => row.ValueKind == JsonValueKind.Object &&
+                    row.TryGetProperty($"p{point}", out var value) && HasNumber(value)) : 0 }).ToArray(),
+            normalizedDays = new AggregateMapping(83022, 83118, 83102, 83072, 83322, 83323)
+                .Normalize(daily, plant.Id, id, zone, day, day).Select(row => new { row.Point, row.Kwh }).ToArray(),
+            dayTimestamps = daySeries.ValueKind == JsonValueKind.Object
+                ? daySeries.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.Array)
+                    .SelectMany(p => p.Value.EnumerateArray()).Where(row => row.ValueKind == JsonValueKind.Object)
+                    .Select(row => row.TryGetProperty("time_stamp", out var at) ? at.ToString() : "")
+                    .Distinct().Take(5).ToArray() : [],
+            days = dayPoints.Select(point => new { point, samples = daySeries.ValueKind == JsonValueKind.Object &&
+                daySeries.TryGetProperty($"p{point}", out var values) && values.ValueKind == JsonValueKind.Array
+                ? values.EnumerateArray().Count(row => row.ValueKind == JsonValueKind.Object &&
+                    row.TryGetProperty("2", out var value) && HasNumber(value)) : 0 }).ToArray()
+        };
     }
 
     public async Task<Aggregate[]> ReadAggregates(Guid plantId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
+        => await ReadAggregates(plantId, start, end, start, end, ct);
+
+    public async Task<Aggregate[]> ReadAggregates(Guid plantId, DateTimeOffset jobStart, DateTimeOffset jobEnd,
+        DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Store>();
         var plant = await db.Plants.AsNoTracking().SingleAsync(p => p.Id == plantId, ct);
         var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
-        var first = Calendar.Day(start, zone);
-        var last = Calendar.Day(end, zone).AddDays(-1);
+        const int batchDays = 100;
+        var first = Calendar.Day(jobStart, zone);
+        if (Calendar.Utc(first, zone) < jobStart) first = first.AddDays(1);
+        int elapsed = Math.Max(0, Calendar.Day(start, zone).DayNumber - first.DayNumber);
+        var block = first.AddDays(elapsed / batchDays * batchDays);
+        if (Calendar.Utc(block, zone) < start) block = block.AddDays(batchDays);
+        if (Calendar.Utc(block, zone) >= end) return [];
+        first = block;
+        var last = Calendar.Day(jobEnd, zone).AddDays(-1);
+        if (last.DayNumber - first.DayNumber >= batchDays) last = first.AddDays(batchDays - 1);
         if (last < first) return [];
         var metadata = await db.Connections.AsNoTracking().SingleAsync(c => c.PlantId == plantId, ct);
         var mapping = JsonSerializer.Deserialize<SungrowMapping>(metadata.Capabilities)?.Daily;

@@ -2,8 +2,14 @@ services:
   app:
     environment:
       Sungrow__AppFile: /run/secrets/sungrow_app
-      Sungrow__CallSpacingSeconds: ${SUNGROW_CALL_SPACING_SECONDS:-45}
+      Sungrow__CallSpacingSeconds: ${SUNGROW_CALL_SPACING_SECONDS:-15}
+      Sungrow__LiveBackgroundSeconds: ${SUNGROW_LIVE_BACKGROUND_SECONDS:-600}
+      Sungrow__LiveMinCloudSeconds: ${SUNGROW_LIVE_MIN_CLOUD_SECONDS:-300}
+      Sungrow__LiveMaxAgeSeconds: ${SUNGROW_LIVE_MAX_AGE_SECONDS:-900}
+      Sungrow__HistoryRetryHours: ${SUNGROW_HISTORY_RETRY_HOURS:-24}
       Sungrow__RefreshMinutes: ${SUNGROW_REFRESH_MINUTES:-1440}
+      Sungrow__DefaultZone: ${SUNGROW_DEFAULT_ZONE:-Europe/Berlin}
+      Sungrow__InitialHistoryDays: ${SUNGROW_INITIAL_HISTORY_DAYS:-30}
     secrets:
       - sungrow_app
 secrets:

@@ -1,6 +1,6 @@
 # Solar Insight
 
-Selbst hostbare PV-Analyse mit ASP.NET Core, React, ECharts und PostgreSQL. Der Demo-Modus enthält 24 vollständige synthetische Monate in Fünf-Minuten-Auflösung. Analysen und Szenarien verwenden denselben serverseitigen Rechenkern.
+Selbst hostbare PV-Analyse mit ASP.NET Core, React, ECharts und PostgreSQL. Der Demo-Modus enthält 24 vollständige synthetische Monate in Fünf-Minuten-Auflösung. Analysen und Szenarien verwenden denselben serverseitigen Rechenkern. „Jetzt“, „Heute“ und die Live-Messpunktprobe verwenden dieselben Ansichten wie im privaten Betrieb und spielen einen gekennzeichneten synthetischen Demotag ab.
 
 ![Übersicht mit synthetischen Demodaten](docs/demo-uebersicht.png)
 
@@ -49,16 +49,15 @@ Ein minimales nginx-Beispiel für eine bereits eingerichtete TLS-Site ist in [do
 
 ## Sungrow anbinden
 
-Der lesende Adapter verwendet dokumentierte EU-Open-API-Verträge. Er ist **nicht live verifiziert**. Es liegen keine echten Zugangsdaten oder Anlagendaten vor. Die Freigabe und eine autorisierte Prüfung von Messpunkten, Einheiten, Vorzeichen und Zeitsemantik stehen aus. Bestätigte Herstellerangaben, konkrete Quellen und offene Fragen stehen in [docs/provider-capabilities.md](docs/provider-capabilities.md).
+Der lesende Adapter verwendet dokumentierte EU-Open-API-Verträge. Die dokumentierte Anlagenstichprobe deckt Tageswerte und einen Teil der Live-Kanäle ab. Die vollständige Live-Abnahme A25 steht aus. Quellen, Stichprobe und offene Fragen stehen in [docs/provider-capabilities.md](docs/provider-capabilities.md).
 
 1. Im Sungrow-Entwicklerportal eine OAuth-Anwendung anlegen und freigeben lassen.
 2. Die vom Portal vorgegebene Einwilligungs-URL und eine eigene registrierte HTTPS-Rücksprungadresse verwenden.
 3. Die App-Daten serverseitig als Secret-Datei `secrets/sungrow-app.json` bereitstellen.
 4. Die private Instanz zusätzlich mit `compose.sungrow.yaml` starten.
-5. In Einstellungen den einmaligen Autorisierungscode eintauschen, Anlagen laden und die richtige Anlage auswählen.
-6. Messpunkt-IDs, AC-Messorte, Einheiten, Vorzeichen, Intervallsemantik, SOC-Skalierung und Zeitzone anhand einer autorisierten Probe bestätigen. Nicht verfügbare Kanäle können mit 0 ausgelassen werden. Für Simulationen sind gemeinsame PV- und Verbrauchsdaten sowie bestätigte Speicherparameter nötig.
-7. Historischen Import unter Datenstatus starten. Der aktuelle Tag ist über die verwendete Historienroute ausgeschlossen.
-8. Referenzfehler und einzelne Tage prüfen. Die Live-Abnahme A25 bleibt bis zu dieser Prüfung offen.
+5. In **Einstellungen → Verbindung** den einmaligen Autorisierungscode eingeben, die Anlage wählen und ihre vorausgefüllte Zeitzone prüfen.
+6. **Anlage aktivieren**. Solar Insight plant den Rückimport automatisch ein. Unter **Datenstatus** stehen Fortschritt, letzter erfolgreicher Abruf und gegebenenfalls der nächste Schritt.
+7. Für Minutenanalysen und Live-Kanäle ein bestätigtes [Betreiberprofil](docs/operations.md#betreiberprofil-für-messpunkte) hinterlegen. Für Simulationen sind gemeinsame PV- und Verbrauchszeitreihen und bestätigte Speicherparameter nötig.
 
 Form der serverseitigen App-Datei, mit eigenen freigegebenen Werten auszufüllen.
 
@@ -76,7 +75,7 @@ docker compose -p solar-private -f compose.yaml -f compose.sungrow.yaml up --bui
 
 Während der Erstinstallation zusätzlich `-f compose.owner.yaml` angeben. Die manuelle Codeübergabe ist eine dokumentierte Abweichung vom automatisierten OAuth-Weiterleitungsablauf. Sie benötigt einen vom Betreiber kontrollierten Empfang der registrierten Rücksprungadresse. Unterstützte State-/PKCE-Parameter sind für die konkrete freigegebene Anwendung noch zu bestätigen.
 
-Der Abstand von standardmäßig 45 Sekunden zwischen Provideraufrufen ist eine konservative Betriebsannahme, kein behauptetes Sungrow-Rate-Limit. Die Werte `SUNGROW_CALL_SPACING_SECONDS` und `SUNGROW_REFRESH_MINUTES` sind mit dem tatsächlich gebuchten Kontingent abzugleichen. Der Hintergrundimport liest abgeschlossene historische Tage und wiederholt ein zweitägiges Korrekturfenster. Ein automatischer Lauf holt höchstens 14 weitere Kalendertage auf.
+Solar Insight startet Provideraufrufe standardmäßig im Abstand von mindestens 15 Sekunden. Die Werte `SUNGROW_CALL_SPACING_SECONDS` und `SUNGROW_REFRESH_MINUTES` sind mit dem gebuchten Kontingent abzugleichen. Der Import fragt Tagesaggregate vor den Minutenwerten des jeweiligen Blocks ab. Ein Block umfasst bis zu 100 vollständige Kalendertage. Der Hintergrunddienst prüft abgeschlossene Tage und lädt gezielt fehlende Minutenfenster und Tagesaggregate nach. Importvorschau, Live-Anzeige und der optionale Heimnetz-Lesezugang sind in der [Betriebsdokumentation](docs/operations.md) beschrieben.
 
 ## Bedienung
 
@@ -119,5 +118,5 @@ Der vollständige Prüfstand und die einzelnen A01–A25-Kriterien stehen in [do
 - [Provider-Fähigkeiten und Quellen](docs/provider-capabilities.md)
 - [Gepinnte Abhängigkeiten und Lizenzen](docs/dependencies.md)
 
-Die Repository-Lizenz ist noch vom Eigentümer festzulegen.
+Solar Insight steht unter der [MIT-Lizenz](LICENSE). Copyright © 2026 Frederik Thuss.
 

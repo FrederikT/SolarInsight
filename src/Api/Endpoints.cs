@@ -29,7 +29,7 @@ public static class Endpoints
                 capabilities = new { energy = plant.Synthetic || mapped, timeseries = plant.Synthetic || mapping?.Points.Length > 0,
                     events = plant.Synthetic || mapping?.Grid is not null,
                     simulation = plant.Synthetic || mapping is { Pv: not null, Load: not null, ConfirmedAcPaths: true } },
-                providerStatus = plant.Synthetic ? "Synthetische Demodaten" : mapped ? "Sungrow-Messpunktzuordnung manuell bestätigt" : "Sungrow-Verbindung ausstehend" };
+                providerStatus = plant.Synthetic ? "Synthetische Demodaten" : mapped ? "Sungrow-Anlage zugeordnet" : "Sungrow-Verbindung ausstehend" };
         });
         api.MapGet("/energy-insights", async ([AsParameters] ViewPeriod query, int? hour, int? mix, int? offset,
             Queries q, CancellationToken ct) =>
@@ -40,7 +40,7 @@ public static class Endpoints
             var rule = JsonSerializer.Deserialize<EventRule>(view.Plant.Rules) ?? new();
             var battery = view.ConfigurationBoundary ? null : view.Battery;
             var flow = EnergyInsights.Analyze(view.Rows, view.KnownPaths, battery, rule.SocTolerance, view.Zone, view.Period.Days == 1);
-            var storage = StorageInsights.Profile(view.Rows, view.Period, view.Zone, battery, rule.SocTolerance, hour);
+            var storage = StorageInsights.Profile(view.Rows, view.Period, view.Zone, battery, rule.SocTolerance, hour, view.BatteryFor);
             var phases = mix is { } category ? flow.Phases.Where(p => (int)p.Mix == category).ToArray() : [];
             NightDetail[] nights = [];
             if (hour is >= 22 or < 6)
@@ -48,11 +48,11 @@ public static class Endpoints
                 var byDay = view.Rows.ToLookup(r => Calendar.Day(r.Start, view.Zone));
                 nights = storage.Days.Where(d => d.Import == true).Select(d => hour < 6 ? d.Day.AddDays(-1) : d.Day)
                     .Distinct().Select(d => StorageInsights.Night(byDay[d].Concat(byDay[d.AddDays(1)]).ToArray(),
-                        d, view.Zone, battery, rule.SocTolerance)).ToArray();
+                        d, view.Zone, battery, rule.SocTolerance, view.BatteryFor)).ToArray();
             }
             return Results.Ok(new
             {
-                view.Period, zone = view.Zone.Id, view.Hours,
+                view.Period, zone = view.Zone.Id, view.Hours, view.KnownPaths,
                 latest = view.Rows.Length == 0 ? (DateTimeOffset?)null : view.Rows[^1].End,
                 start = Calendar.Utc(view.Period.Start, view.Zone), end = Calendar.Utc(view.Period.End, view.Zone),
                 flow.Breakdown, flow.Points, storage,
@@ -71,7 +71,8 @@ public static class Endpoints
                 var previous = Calendar.Compare(view.Period, query.Kind, compare == "year", today);
                 if (previous.Days > 0) comparison = (await q.Read(view.Plant, previous, ct)).Report();
             }
-            return new { report = view.Report(), comparison, buckets = Queries.Buckets(view) };
+            return new { report = view.Report(), comparison, buckets = Queries.Buckets(view),
+                providerBuckets = view.Period.Days > 1 && view.Aggregates.Length > 0 ? Queries.Buckets(view, true) : null };
         });
         api.MapGet("/timeseries", async ([AsParameters] ViewPeriod query, Queries q, CancellationToken ct) =>
         {
@@ -106,19 +107,57 @@ public static class Endpoints
             decimal limit = kw ?? 1;
             if (limit is < 0 or > 100) throw new ArgumentException("Ungültige Aufnahmeleistung.");
             var valid = view.Rows.Where(r => r.Export.HasValue).ToArray();
+            decimal Captured(Interval row) => Math.Min(row.Export!.Value / row.Hours, limit) * window.Hours(row, view.Zone);
+            var days = valid.GroupBy(row => Calendar.Day(row.Start, view.Zone)).OrderBy(group => group.Key)
+                .Select(group => new { day = group.Key, export = group.Sum(row => row.Export), captured = group.Sum(Captured) });
+            var months = valid.GroupBy(row => Calendar.Day(row.Start, view.Zone).ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture))
+                .OrderBy(group => group.Key).Select(group => new { month = group.Key, export = group.Sum(row => row.Export),
+                    captured = group.Sum(Captured), hours = group.Sum(row => row.Hours) });
+            var seasons = valid.GroupBy(row => Calendar.Select(Calendar.Day(row.Start, view.Zone), "season").Start)
+                .OrderBy(group => group.Key).Select(group => new { start = group.Key, export = group.Sum(row => row.Export),
+                    captured = group.Sum(Captured), hours = group.Sum(row => row.Hours) });
+            var hourTotals = new decimal[24];
+            var hourCoverage = new decimal[24];
+            var hourWindows = Enumerable.Range(0, 24).Select(hour => new Window(hour * 60, (hour + 1) * 60)).ToArray();
+            foreach (var row in valid)
+            {
+                var local = TimeZoneInfo.ConvertTime(row.Start, view.Zone);
+                for (int hour = local.Hour; hour < 24 && hour * 60 < local.TimeOfDay.TotalMinutes + (double)row.Hours * 60; hour++)
+                {
+                    var hours = hourWindows[hour].Hours(row, view.Zone);
+                    hourCoverage[hour] += hours;
+                    hourTotals[hour] += row.Export!.Value / row.Hours * hours;
+                }
+            }
+            var hoursOfDay = hourTotals.Select((energy, hour) => new { hour, export = hourCoverage[hour] == 0 ? (decimal?)null : energy });
             return new { view.Period, timeZone = view.Zone.Id, view.Revision,
                 export = valid.Length == 0 ? null : valid.Sum(r => r.Export),
                 captured = valid.Length == 0 ? (decimal?)null :
-                    valid.Sum(r => Math.Min(r.Export!.Value / r.Hours, limit) * window.Hours(r, view.Zone)),
+                    valid.Sum(Captured),
                 coverage = valid.Sum(r => r.Hours) / view.Hours,
+                dailyExport = view.Aggregates.Any(a => a.Point == "export")
+                    ? view.Aggregates.Where(a => a.Point == "export").Sum(a => (decimal?)a.Kwh) : null,
+                days, months, seasons, hoursOfDay,
                 assumption = "Flexibel regelbare Last ohne Mindestleistung. Export nach bisheriger Speichernutzung." };
         });
-        api.MapGet("/data-status", async ([AsParameters] ViewPeriod query, Queries q, Store db, CancellationToken ct) =>
+        api.MapGet("/data-status", async ([AsParameters] ViewPeriod query, Queries q, Store db, LiveProvider live, SyntheticProvider synthetic, CancellationToken ct) =>
         {
             var view = await Read(q, query, ct);
-            var latest = await db.Readings.Where(r => r.PlantId == view.Plant.Id).MaxAsync(r => (DateTimeOffset?)r.End, ct);
+            var latestMinute = await db.Readings.Where(r => r.PlantId == view.Plant.Id).MaxAsync(r => (DateTimeOffset?)r.End, ct);
+            var latestDaily = await db.Aggregates.Where(a => a.PlantId == view.Plant.Id && a.Origin == "provider")
+                .MaxAsync(a => (DateTimeOffset?)a.End, ct);
+            var latest = new[] { latestMinute, latestDaily }.Max();
             var job = await db.Imports.AsNoTracking().Where(j => j.PlantId == view.Plant.Id)
-                .OrderByDescending(j => j.LastAttempt).FirstOrDefaultAsync(ct);
+                .OrderByDescending(j => j.Status == "pending" || j.Status == "running")
+                .ThenByDescending(j => j.Cancelled ?? j.LastAttempt ?? j.Start).FirstOrDefaultAsync(ct);
+            var progress = job is null ? null : ImportProgress.Describe(job,
+                view.Plant.Synthetic ? synthetic.Window : live.Window, DateTimeOffset.UtcNow);
+            var lastImport = await db.Imports.Where(j => j.PlantId == view.Plant.Id).MaxAsync(j => j.LastSuccess, ct);
+            var lastRepair = await db.HistoryScans.Where(s => s.PlantId == view.Plant.Id)
+                .Select(s => s.LastSuccess).SingleOrDefaultAsync(ct);
+            var lastLive = await db.LivePolls.Where(p => p.PlantId == view.Plant.Id &&
+                (p.Quality == "confirmed" || p.Quality == "repeated")).MaxAsync(p => (DateTimeOffset?)p.FetchedAt, ct);
+            var lastSuccess = new[] { lastImport, lastRepair, lastLive }.Max();
             var gaps = new List<object>();
             var cursor = Calendar.Utc(view.Period.Start, view.Zone);
             foreach (var row in view.Rows.Where(r => r.Pv.HasValue && r.Load.HasValue))
@@ -128,7 +167,14 @@ public static class Endpoints
             }
             var end = Calendar.Utc(view.Period.End, view.Zone);
             if (cursor < end && gaps.Count < 100) gaps.Add(new { start = cursor, end });
-            return new { report = view.Report(), latest, job, gaps, provider = view.Plant.Synthetic ?
+            var periodStart = Calendar.Utc(view.Period.Start, view.Zone);
+            var repair = await db.HistoryGaps.AsNoTracking().Where(g => g.PlantId == view.Plant.Id &&
+                g.Start < end && g.End > periodStart)
+                .OrderByDescending(g => g.Open).ThenBy(g => g.Start)
+                .Select(g => new { g.Start, g.End, g.Kind, g.Attempts, g.Due, g.Open, g.Error }).Take(100).ToArrayAsync(ct);
+            var intervalCounts = new { total = view.Rows.Length, pv = view.Rows.Count(r => r.Pv.HasValue),
+                load = view.Rows.Count(r => r.Load.HasValue), both = view.Rows.Count(r => r.Pv.HasValue && r.Load.HasValue) };
+            return new { report = view.Report(), latest, lastSuccess, job, progress, gaps, repair, intervalCounts, provider = view.Plant.Synthetic ?
                 "Synthetische Demodaten" : view.Plant.ProviderId is null ? "Sungrow-Freigabe und Messpunktvalidierung ausstehend" : "Sungrow-Leseimport" };
         });
         api.MapGet("/settings/plant", async (Queries q, Store db, CancellationToken ct) =>
@@ -153,8 +199,18 @@ public static class Endpoints
             Validate(input.Rule);
             var current = await q.Plant(ct);
             await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT pg_advisory_xact_lock(hashtextextended({current.Id.ToString()}, 0))""", ct);
             var plant = await LockPlant(db, current.Id, ct);
             plant.Name = input.Name.Trim();
+            if (plant.ProviderId is not null && plant.Zone != input.Zone &&
+                await db.Imports.AnyAsync(j => j.PlantId == plant.Id && (j.Status == "pending" || j.Status == "running"), ct))
+                throw new ArgumentException("Die Anlagenzeitzone kann nach Abschluss des laufenden Imports geändert werden.");
+            if (plant.ProviderId is not null && plant.Zone != input.Zone &&
+                (await db.Readings.AnyAsync(r => r.PlantId == plant.Id, ct) ||
+                 await db.LiveMeasurements.AnyAsync(r => r.PlantId == plant.Id, ct) ||
+                 await db.Aggregates.AnyAsync(r => r.PlantId == plant.Id, ct)))
+                throw new ArgumentException("Eine Änderung der Anlagenzeitzone erfordert eine Datenmigration.");
             plant.Zone = input.Zone;
             plant.Rules = JsonSerializer.Serialize(input.Rule);
             plant.Revision++;
@@ -260,7 +316,7 @@ public static class Endpoints
             throw new ArgumentException("Ungültige Ereignisschwellen.");
     }
 
-    static async Task<Plant> LockPlant(Store db, Guid id, CancellationToken ct) =>
+    internal static async Task<Plant> LockPlant(Store db, Guid id, CancellationToken ct) =>
         (await db.Plants.FromSqlInterpolated($"""SELECT * FROM "Plants" WHERE "Id" = {id} FOR UPDATE""")
             .ToListAsync(ct)).Single();
 
