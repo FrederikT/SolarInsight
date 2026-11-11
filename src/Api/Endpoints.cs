@@ -71,7 +71,8 @@ public static class Endpoints
                 var previous = Calendar.Compare(view.Period, query.Kind, compare == "year", today);
                 if (previous.Days > 0) comparison = (await q.Read(view.Plant, previous, ct)).Report();
             }
-            return new { report = view.Report(), comparison, buckets = Queries.Buckets(view) };
+            return new { report = view.Report(), comparison, buckets = Queries.Buckets(view),
+                providerBuckets = view.Period.Days > 1 && view.Aggregates.Length > 0 ? Queries.Buckets(view, true) : null };
         });
         api.MapGet("/timeseries", async ([AsParameters] ViewPeriod query, Queries q, CancellationToken ct) =>
         {
@@ -106,11 +107,37 @@ public static class Endpoints
             decimal limit = kw ?? 1;
             if (limit is < 0 or > 100) throw new ArgumentException("Ungültige Aufnahmeleistung.");
             var valid = view.Rows.Where(r => r.Export.HasValue).ToArray();
+            decimal Captured(Interval row) => Math.Min(row.Export!.Value / row.Hours, limit) * window.Hours(row, view.Zone);
+            var days = valid.GroupBy(row => Calendar.Day(row.Start, view.Zone)).OrderBy(group => group.Key)
+                .Select(group => new { day = group.Key, export = group.Sum(row => row.Export), captured = group.Sum(Captured) });
+            var months = valid.GroupBy(row => Calendar.Day(row.Start, view.Zone).ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture))
+                .OrderBy(group => group.Key).Select(group => new { month = group.Key, export = group.Sum(row => row.Export),
+                    captured = group.Sum(Captured), hours = group.Sum(row => row.Hours) });
+            var seasons = valid.GroupBy(row => Calendar.Select(Calendar.Day(row.Start, view.Zone), "season").Start)
+                .OrderBy(group => group.Key).Select(group => new { start = group.Key, export = group.Sum(row => row.Export),
+                    captured = group.Sum(Captured), hours = group.Sum(row => row.Hours) });
+            var hourTotals = new decimal[24];
+            var hourCoverage = new decimal[24];
+            var hourWindows = Enumerable.Range(0, 24).Select(hour => new Window(hour * 60, (hour + 1) * 60)).ToArray();
+            foreach (var row in valid)
+            {
+                var local = TimeZoneInfo.ConvertTime(row.Start, view.Zone);
+                for (int hour = local.Hour; hour < 24 && hour * 60 < local.TimeOfDay.TotalMinutes + (double)row.Hours * 60; hour++)
+                {
+                    var hours = hourWindows[hour].Hours(row, view.Zone);
+                    hourCoverage[hour] += hours;
+                    hourTotals[hour] += row.Export!.Value / row.Hours * hours;
+                }
+            }
+            var hoursOfDay = hourTotals.Select((energy, hour) => new { hour, export = hourCoverage[hour] == 0 ? (decimal?)null : energy });
             return new { view.Period, timeZone = view.Zone.Id, view.Revision,
                 export = valid.Length == 0 ? null : valid.Sum(r => r.Export),
                 captured = valid.Length == 0 ? (decimal?)null :
-                    valid.Sum(r => Math.Min(r.Export!.Value / r.Hours, limit) * window.Hours(r, view.Zone)),
+                    valid.Sum(Captured),
                 coverage = valid.Sum(r => r.Hours) / view.Hours,
+                dailyExport = view.Aggregates.Any(a => a.Point == "export")
+                    ? view.Aggregates.Where(a => a.Point == "export").Sum(a => (decimal?)a.Kwh) : null,
+                days, months, seasons, hoursOfDay,
                 assumption = "Flexibel regelbare Last ohne Mindestleistung. Export nach bisheriger Speichernutzung." };
         });
         api.MapGet("/data-status", async ([AsParameters] ViewPeriod query, Queries q, Store db, LiveProvider live, SyntheticProvider synthetic, CancellationToken ct) =>
@@ -145,7 +172,9 @@ public static class Endpoints
                 g.Start < end && g.End > periodStart)
                 .OrderByDescending(g => g.Open).ThenBy(g => g.Start)
                 .Select(g => new { g.Start, g.End, g.Kind, g.Attempts, g.Due, g.Open, g.Error }).Take(100).ToArrayAsync(ct);
-            return new { report = view.Report(), latest, lastSuccess, job, progress, gaps, repair, provider = view.Plant.Synthetic ?
+            var intervalCounts = new { total = view.Rows.Length, pv = view.Rows.Count(r => r.Pv.HasValue),
+                load = view.Rows.Count(r => r.Load.HasValue), both = view.Rows.Count(r => r.Pv.HasValue && r.Load.HasValue) };
+            return new { report = view.Report(), latest, lastSuccess, job, progress, gaps, repair, intervalCounts, provider = view.Plant.Synthetic ?
                 "Synthetische Demodaten" : view.Plant.ProviderId is null ? "Sungrow-Freigabe und Messpunktvalidierung ausstehend" : "Sungrow-Leseimport" };
         });
         api.MapGet("/settings/plant", async (Queries q, Store db, CancellationToken ct) =>

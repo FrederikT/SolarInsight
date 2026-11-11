@@ -95,10 +95,11 @@ public static class Storage
     public static readonly Guid DemoId = Guid.Parse("92b5a13b-6607-4182-a240-65092f605bc3");
     public static readonly Guid LocalId = Guid.Parse("6ad1526e-319f-4dc7-89bd-f30101e26254");
 
-    public static async Task<int> UpsertAggregates(Store db, Guid plant, Aggregate[] rows, CancellationToken ct, bool fillOnly = false)
+    public static async Task<int> UpsertAggregates(Store db, Guid plant, Aggregate[] rows, CancellationToken ct,
+        bool fillOnly = false, string origin = "provider")
     {
         if (rows.Length == 0) return 0;
-        if (rows.Any(r => r.PlantId != plant || r.Origin != "provider" || r.Kwh < 0 || r.End <= r.Start))
+        if (rows.Any(r => r.PlantId != plant || r.Origin != origin || r.Kwh < 0 || r.End <= r.Start))
             throw new ArgumentException("Ungültiges Anlagenaggregat.");
         string json = JsonSerializer.Serialize(rows);
         int changed = await db.Database.ExecuteSqlInterpolatedAsync($"""

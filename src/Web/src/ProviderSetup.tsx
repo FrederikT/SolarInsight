@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { request, useData } from './api'
-import { number, pct, stamp, Status } from './components'
+import { number, pct, power, stamp, Status } from './components'
 
 type AuthorizedPlant = { id: string; name: string }
 const points = [['pv', 'PV-Erzeugung'], ['load', 'Hausverbrauch'], ['grid', 'Netzleistung'],
@@ -319,7 +319,7 @@ export function LiveDiagnostics({ zone, showCandidates = false }: { zone: string
     {busy && <Status text="Live-Probe läuft …" />}
     {probe && <p>{probe.measuredAt ? stamp(probe.measuredAt, zone) : 'Messzeit unbekannt'} · {points.map(([key, label]) => {
       const value = probe.values[key]
-      return label + ' ' + (value == null ? 'unbekannt' : key === 'soc' ? pct(value) : number(value) + ' kW')
+      return label + ' ' + (value == null ? 'unbekannt' : key === 'soc' ? pct(value) : power(value))
     }).join(' · ')}</p>}
     {!!probe?.missing.length && <Status text={'Keine verwertbare Messung für ' +
       points.filter(([key]) => probe.missing.includes(key)).map(([, label]) => label).join(', ') + '.'} />}

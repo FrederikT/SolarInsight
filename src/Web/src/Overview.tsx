@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { EnergyInsights } from './EnergyInsights'
 import { base, useData, type EnergyEvent, type Job, type Point, type Report } from './api'
-import { bounds, Chart, chartOptions, date, eventBounds, number, Panel, pct, stamp, Status } from './components'
+import { bounds, Chart, chartOptions, date, eventBounds, localDay, number, Panel, pct, power, stamp, Status } from './components'
+import { TodayTimeline } from './LiveView'
 
 const labels = { pv: 'PV-Erzeugung', load: 'Hausverbrauch', import: 'Netzbezug', export: 'Einspeisung',
   charge: 'Batterieladung', discharge: 'Batterieentladung', soc: 'Ladezustand', cost: 'Netto-Kosten' }
@@ -10,23 +11,27 @@ const energy = ['pv', 'load', 'import', 'export'] as const
 const storage = ['charge', 'discharge', 'soc'] as const
 const keys = [...energy, ...storage]
 
-export function Overview({ query, drill, day, evidence, simulation, version }: {
+export function Overview({ query, drill, day, evidence, simulation, version, liveVersion }: {
   query: string; drill: (day: string, exclusive?: string | null) => void; day: string | null; evidence: boolean;
-  simulation: string | null; version: number
+  simulation: string | null; version: number; liveVersion: number
 }) {
   const [perspective, setPerspective] = useState('energy')
   const [compare, setCompare] = useState('')
   const [model, setModel] = useState(false)
   const [heat, setHeat] = useState('')
+  const [intervalSource, setIntervalSource] = useState(false)
   const path = query + (compare ? '&compare=' + compare : '')
-  const state = useData<{ report: Report; comparison: Report | null; buckets: Point[] }>('/overview?' + path, version)
+  const state = useData<{ report: Report; comparison: Report | null; buckets: Point[]; providerBuckets?: Point[] | null }>('/overview?' + path, version)
   const events = useData<{ events: EnergyEvent[] }>('/events?' + query + '&limit=6', version)
   const modeled = useData<Job>(model && simulation && day ? '/simulations/' + simulation + '?day=' + day : null, version)
   const heatmap = useData<{ points: { day: string; hour: number; offset: string; import: number | null; export: number | null }[] }>(
     heat && !day ? '/heatmap?' + query : null, version)
   if (!state?.data) return <Status error={state?.error} />
-  const { report, comparison, buckets } = state.data
+  const { report, comparison, providerBuckets } = state.data
   const singleDay = Date.parse(report.period.end) - Date.parse(report.period.start) === 86_400_000
+  const runningDay = singleDay && report.period.start === localDay(new Date().toISOString(), report.timeZone)
+  const providerChart = !singleDay && perspective !== 'cost' && !!providerBuckets?.length && !intervalSource
+  const buckets = providerChart ? providerBuckets! : state.data.buckets
   const m = report.metrics
   const dailyMetrics = report.providerMetrics
   function dailyRatio(total: 'pv' | 'load', deducted: 'export' | 'import') {
@@ -90,10 +95,16 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
   const hasHeatValues = heatPoints.some(point => (heat === 'import' ? point.import : point.export) != null)
   const missingSeries = seriesKeys.filter(key => !buckets.some(point => point[key] != null))
   const heatDays = [...new Set(heatPoints.map(p => p.day))]
-  const heatHours = [...new Set(heatPoints.map(p => String(p.hour).padStart(2, '0') + ':00 UTC+' + p.offset.slice(0, 5)))].sort()
+  const repeatedHours = new Set(heatPoints.filter((point, index) => index > 0 &&
+    heatPoints[index - 1].day === point.day && heatPoints[index - 1].hour === point.hour).map(point => point.hour))
+  const heatHour = (p: typeof heatPoints[number]) => String(p.hour).padStart(2, '0') + ':00' +
+    (repeatedHours.has(p.hour) ? ' UTC' + (p.offset.startsWith('-') ? p.offset.slice(0, 6) : '+' + p.offset.slice(0, 5)) : '')
+  const heatHours = [...new Set(heatPoints.map(heatHour))].sort()
   return <>
     <div className="section-heading"><div><span className="eyebrow">ENERGIEBILANZ</span><h1>{day ? 'Tagesdetail' : evidence ? 'Ereigniszeitraum' : 'Übersicht'}</h1>
       <p>{bounds(report.period)} · {report.timeZone}</p></div><a className="button secondary" href={base + '/exports/overview?' + query}>CSV exportieren</a></div>
+    {runningDay && !dailyMetrics && <p className="notice">Der Tag läuft noch. Der Verlauf zeigt bereits gespeicherte Leistungsmessungen.
+      Tagesenergie und Quoten benötigen Energieintervalle oder Sungrow-Tageswerte. Für Nettokosten sind zusätzlich Tarife erforderlich.</p>}
     {dailyMetrics && incompleteChannels.length > 0 && <aside className="history-warning" aria-label="Achtung: Lücken im Zeitverlauf">
       <strong>Achtung: Der Zeitverlauf ist unvollständig</strong>
       <p>Für {incompleteChannels.map(key => labels[key]).join(', ')} fehlen einzelne oder alle Zeitwerte.
@@ -129,33 +140,72 @@ export function Overview({ query, drill, day, evidence, simulation, version }: {
         <label>Vergleich<select value={compare} onChange={e => setCompare(e.target.value)}>
           <option value="">Aus</option><option value="previous">Vorperiode</option><option value="year">Vorjahr</option></select></label>
         {day && simulation && <label className="check"><input type="checkbox" checked={model} onChange={e => setModel(e.target.checked)} /> Szenario einblenden</label>}
+        {!singleDay && perspective !== 'cost' && !!providerBuckets?.length && <label>Datenquelle<select value={intervalSource ? 'intervals' : 'daily'}
+          onChange={event => setIntervalSource(event.target.value === 'intervals')}>
+          <option value="daily">Sungrow-Tageswerte</option><option value="intervals">Summierte Messintervalle</option>
+        </select></label>}
       </div>
       {modeled?.error && <Status error={modeled.error} />}
-      {missingSeries.length > 0 && <p>Keine Werte im Verlauf für {missingSeries.map(key => labels[key]).join(', ')}.</p>}
-      {chartSeries.some(series => series.data.some(value => value != null))
+      {runningDay && <>
+        <TodayTimeline zone={report.timeZone} version={liveVersion} label="Gespeicherte Messwerte des laufenden Tages" />
+        <p>Vorläufige Energie für belegte Intervalle: {([...energy, 'charge', 'discharge'] as const)
+          .filter(key => m[key].kwh != null)
+          .map(key => labels[key] + ' ' + number(m[key].kwh) + ' kWh').join(' · ') ||
+          'Für den laufenden Tag liegen noch keine belegten Energieintervalle vor.'}</p>
+      </>}
+      {!runningDay && missingSeries.length > 0 && <p>Keine Werte im Verlauf für {missingSeries.map(key => labels[key]).join(', ')}.</p>}
+      {(!runningDay || model) && (chartSeries.some(series => series.data.some(value => value != null))
         ? <Chart label={singleDay ? 'Tagesverlauf mit Leistung und Ladezustand' : 'Energieverlauf'} option={chartOptions(chartNames, unit, chartSeries, singleDay)}
           click={singleDay ? undefined : drill} /> : <Status text={singleDay && dailyMetrics ?
             'Für diesen Tag liegen Tageswerte vor. Ein Leistungsverlauf benötigt Minutenmesswerte.' :
-            'Für diese Ansicht liegen im gewählten Zeitraum keine Daten vor.'} />}
+            'Für diese Ansicht liegen im gewählten Zeitraum keine Daten vor.'} />)}
       {comparison && <p>Vergleich {bounds(comparison.period)} · Netzbezug {number(comparison.metrics.import.kwh)} kWh · Einspeisung {number(comparison.metrics.export.kwh)} kWh · Netto {number(comparison.cost.net)} €{comparison.incomplete ? ' · laufend' : ''}{comparison.metrics.coverage < .999 ? ' · Teildaten' : ''}</p>}
       {perspective === 'storage' && <p>SOC zeitgewichtet {pct(m.socMean)} · Minimum {pct(m.socMin)} · Maximum {pct(m.socMax)}.</p>}
       {perspective === 'cost' && <p>Bezug {number(cost.import)} € · Grundpreis {number(cost.fixed)} € · Erlös {number(cost.export)} € · Tarif-/Datenabdeckung Bezug {pct(cost.importCoverage)}, Export {pct(cost.exportCoverage)}</p>}
-      <details><summary>Diagrammdaten als Tabelle</summary><div className="table"><table><thead><tr><th>Zeit</th>{seriesKeys.map(key => <th key={key}>{labels[key]} ({key === 'soc' ? '%' : unit})</th>)}</tr></thead>
+      <details><summary>{runningDay ? 'Historische Intervalle als Tabelle' : 'Diagrammdaten als Tabelle'}</summary><div className="table"><table><thead><tr><th>Zeit</th>{seriesKeys.map(key => <th key={key}>{labels[key]}{singleDay && key !== 'soc' ? '' : ' (' + (key === 'soc' ? '%' : unit) + ')'}</th>)}</tr></thead>
         <tbody>{buckets.map((p, i) => <tr key={p.start || p.day || i}><td>{p.day ? <button className="link" onClick={() => drill(p.day!)}>{date(p.day)}</button> : p.local}</td>
-          {seriesKeys.map(key => <td key={key}>{key === 'soc' ? pct(p.soc) : number(p[key])}</td>)}</tr>)}</tbody></table></div></details>
+          {seriesKeys.map(key => <td key={key}>{key === 'soc' ? pct(p.soc) :
+            singleDay && p[key] != null ? power(p[key]!) : number(p[key])}</td>)}</tr>)}</tbody></table></div></details>
     </Panel>
+    {!!report.counterGaps?.length && <Panel title="Zählerenergie über Messlücken">
+      <p>Die Summe gilt für das gesamte Zeitfenster und bleibt getrennt vom Viertelstundenprofil und dessen Energiesummen.</p>
+      <details><summary>{report.counterGaps.length} belegte Zeitfenster anzeigen</summary><ul>
+        {report.counterGaps.map(gap => <li key={gap.channel + gap.start}>{labels[gap.channel]} · {stamp(gap.start, report.timeZone)}
+          {' '}bis {stamp(gap.end, report.timeZone)} · {number(gap.kwh, 3)} kWh</li>)}
+      </ul></details>
+    </Panel>}
+    {!!report.historicalSoc?.length && <Panel title="Historischer Ladezustand">
+      <p>{report.historicalSoc.length} Gerätezeitpunkte. Werte zwischen den Stichproben bleiben offen.</p>
+      <Chart label="Historische Ladezustand-Stichproben" option={{
+        animation: false, grid: { left: 58, right: 35, top: 24, bottom: 40 },
+        xAxis: { type: 'time', axisLabel: { formatter: (at: number) =>
+          new Date(at).toLocaleTimeString('de-DE', { timeZone: report.timeZone, hour: '2-digit', minute: '2-digit' }) } },
+        yAxis: { type: 'value', min: 0, max: 100, axisLabel: { formatter: '{value} %' } },
+        tooltip: { trigger: 'item', renderMode: 'richText',
+          formatter: (point: { value: [number, number] }) =>
+            stamp(new Date(point.value[0]).toISOString(), report.timeZone) + ' · ' + number(point.value[1], 1) + ' %' },
+        series: [{ type: 'scatter', data: report.historicalSoc.map(sample => [Date.parse(sample.at), sample.value * 100]) }]
+      }} />
+    </Panel>}
     <EnergyInsights key={query} query={query} version={version} drill={drill} dailyCoverage={dailyMetrics?.coverage} />
     {!day && <Panel title="Tageszeit und Energie">
       <label>Heatmap<select value={heat} onChange={e => setHeat(e.target.value)}><option value="">Aus</option><option value="import">Netzbezug</option><option value="export">Einspeisung</option></select></label>
+      <p>Die Spalten zeigen Kalendertage, die Zeilen lokale Uhrzeiten. Jede Zelle summiert die erfasste Energie der Stunde in kWh.
+        Dunklere Farben bedeuten mehr Energie. Eine leere Zelle bedeutet fehlende Messintervalle. 0 kWh ist ein erfasster Wert.
+        Bei Teildaten kann eine Stundensumme unter dem tatsächlichen Wert liegen.</p>
       {heat && !heatmap?.data && <Status error={heatmap?.error} />}
       {heat && heatmap?.data && !hasHeatValues && <Status text={'Keine Stundenwerte für ' + (heat === 'import' ? 'Netzbezug' : 'Einspeisung') + ' im gewählten Zeitraum.'} />}
       {hasHeatValues && <Chart label="Heatmap nach Tag, Stunde und UTC-Abstand" option={{
-        animation: false, tooltip: { renderMode: 'richText' }, grid: { left: 125, right: 22, bottom: 75 },
+        animation: false, tooltip: { renderMode: 'richText', formatter: (item: { value: [number, number, number] }) => {
+          const [dayIndex, hourIndex, value] = item.value
+          return date(heatDays[dayIndex]) + ' · ' + heatHours[hourIndex] + ' · ' + number(value, 3) + ' kWh'
+        } }, grid: { left: 125, right: 22, bottom: 75 },
         xAxis: { type: 'category', data: heatDays }, yAxis: { type: 'category', data: heatHours },
-        visualMap: { min: 0, max: Math.max(1, ...heatPoints.map(p => (heat === 'import' ? p.import : p.export) || 0)), orient: 'horizontal', bottom: 5 },
+        visualMap: { min: 0, max: Math.max(1, ...heatPoints.map(p => (heat === 'import' ? p.import : p.export) || 0)),
+          inRange: { color: ['#e6f2eb', '#176548'] }, text: ['Mehr kWh', 'Weniger kWh'], orient: 'horizontal', bottom: 5 },
         series: [{ type: 'heatmap', data: heatPoints.flatMap(p => {
           const value = heat === 'import' ? p.import : p.export
-          return value == null ? [] : [[heatDays.indexOf(p.day), heatHours.indexOf(String(p.hour).padStart(2, '0') + ':00 UTC+' + p.offset.slice(0, 5)), value]]
+          return value == null ? [] : [[heatDays.indexOf(p.day), heatHours.indexOf(heatHour(p)), value]]
         }) }],
       }} />}
     </Panel>}

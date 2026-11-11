@@ -11,6 +11,7 @@ echarts.use([BarChart, LineChart, HeatmapChart, PieChart, ScatterChart, GridComp
 export const colors = ['#b67715', '#165eaa', '#a8324e', '#008269', '#6d4dac', '#397577', '#5c7065']
 export const number = (value: number | null | undefined, digits = 2) =>
   value == null ? '—' : value.toLocaleString('de-DE', { maximumFractionDigits: digits })
+export const power = (kw: number) => Math.abs(kw) < 10 ? number(kw * 1000, 3) + ' W' : number(kw, 3) + ' kW'
 export const pct = (value: number | null | undefined) => value == null ? '—' : number(value * 100, 1) + ' %'
 export const date = (iso: string) => new Date(iso.slice(0, 10) + 'T12:00:00Z').toLocaleDateString('de-DE', { timeZone: 'UTC' })
 export const localDay = (iso: string, zone: string) => new Intl.DateTimeFormat('sv-SE', { timeZone: zone }).format(new Date(iso))
@@ -20,7 +21,10 @@ export function eventBounds(start: string, end: string, zone: string) {
   return { first, exclusive: last === first ? null : new Date(Date.parse(last) + 86400000).toISOString().slice(0, 10) }
 }
 export const stamp = (iso: string, zone: string) => new Date(iso).toLocaleString('de-DE', { timeZone: zone, timeZoneName: 'short' })
-export const bounds = (p: Period) => date(p.start) + ' bis ' + date(new Date(Date.parse(p.end) - 86400000).toISOString())
+export const bounds = (p: Period) => {
+  const last = new Date(Date.parse(p.end) - 86400000).toISOString().slice(0, 10)
+  return p.start === last ? date(p.start) : date(p.start) + ' bis ' + date(last)
+}
 
 export function Chart({ option, label, click }: { option: EChartsCoreOption; label: string; click?: (name: string) => void }) {
   const target = useRef<HTMLDivElement>(null)
@@ -40,10 +44,13 @@ export function chartOptions(names: string[], unit: string, series: { name: stri
   yAxisIndex?: number; markArea?: object }[], zoom = false) {
   return { animation: false, legend: { type: 'scroll' }, tooltip: { trigger: 'axis', renderMode: 'richText' },
     grid: { left: 58, right: zoom ? 55 : 24, top: 48, bottom: zoom ? 65 : 45 },
-    xAxis: { type: 'category', data: names }, yAxis: zoom ? [{ type: 'value', name: unit },
+    xAxis: { type: 'category', data: names }, yAxis: zoom ? [{ type: 'value', name: unit === 'kW' ? 'Leistung' : unit,
+      ...(unit === 'kW' ? { axisLabel: { formatter: power } } : {}) },
       { type: 'value', name: 'SOC %', min: 0, max: 100 }] : { type: 'value', name: unit },
     dataZoom: zoom ? [{ type: 'inside' }, { type: 'slider' }] : [],
-    series: series.map(s => ({ type: 'bar', showSymbol: false, connectNulls: false, ...s })) }
+    series: series.map(s => ({ type: 'bar', showSymbol: false, connectNulls: false, ...s,
+      ...(unit === 'kW' ? { tooltip: { valueFormatter: (value: unknown) => typeof value !== 'number' ? '—' :
+        s.yAxisIndex === 1 ? number(value, 1) + ' %' : power(value) } } : {}) })) }
 }
 
 export function Panel({ title, children }: { title: string; children: ReactNode }) {

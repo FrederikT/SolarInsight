@@ -284,6 +284,65 @@ public class LiveImportTests
     }
 
     [Fact]
+    public async Task DeviceCounterScanPersistsAcrossRestartsAndStartsTheNextClosedDay()
+    {
+        await using var db = Open();
+        await Importer.Initialize(db, false, default);
+        var today = new DateOnly(2026, 11, 11);
+        var start = Calendar.Utc(today.AddDays(-1), Zone);
+        var end = Calendar.Utc(today, Zone);
+        var plant = new Plant { Id = Guid.NewGuid(), Name = "Device counter fixture", Zone = Zone.Id };
+        var mapping = new SungrowMapping(null, null, null, null, null, true, true, false, false, false, false,
+            new(13134, null, null, null, null, null), 15,
+            Mapping with { Soc = 13141, SocPercent = false }, DeviceCounters: true);
+        db.Plants.Add(plant);
+        db.Connections.Add(new(plant.Id, "mapped", "", JsonSerializer.Serialize(mapping)));
+        db.Imports.Add(new() { Id = Guid.NewGuid(), PlantId = plant.Id, Start = start, Checkpoint = end,
+            End = end, Status = "completed" });
+        db.Aggregates.Add(new(plant.Id, "pv", start, end, .4m, 1, "provider", "fixture"));
+        await db.SaveChangesAsync();
+        var clock = new TestClock(end.AddHours(1));
+        var source = new HistoryFixture { DevicePoints = at => at == start ?
+        [
+            new(13134, "PV", "Wh", true, 3, "available",
+                [new(at, 1000), new(at.AddMinutes(15), 1100), new(at.AddMinutes(45), 1400)]),
+            new(13003, "DC", "W", true, 3, "available",
+                [new(at, 400), new(at.AddMinutes(15), 500), new(at.AddMinutes(45), 400)]),
+            new(13141, "SOC", "", true, 0, "unknown-unit", [new(at, 0), new(at.AddMinutes(45), .45m)])
+        ] : [] };
+        var config = new ConfigurationBuilder().Build();
+        await new HistoryWorker(source, config, clock).Tick(db, plant, default);
+        Assert.Equal(Calendar.Utc(today.AddDays(-30), Zone), Assert.Single(source.DeviceCalls));
+        var scan = await db.HistoryScans.SingleAsync(s => s.PlantId == plant.Id);
+        scan.CounterDay = today.AddDays(-1);
+        scan.CounterUntil = null;
+        scan.CounterData = null;
+        await db.SaveChangesAsync();
+
+        for (int i = 0; i < 11; i++)
+        {
+            clock.Now = clock.Now.AddMinutes(1);
+            await using var restarted = Open();
+            await new HistoryWorker(source, config, clock).Tick(restarted, plant, default);
+        }
+        var reading = await db.Readings.AsNoTracking().SingleAsync(r => r.PlantId == plant.Id);
+        Assert.Equal(.1m, reading.Pv);
+        Assert.Equal(start.AddMinutes(15), reading.End);
+        var gap = await db.Aggregates.AsNoTracking().SingleAsync(a => a.PlantId == plant.Id &&
+            a.Origin == DeviceCounterHistory.GapOrigin);
+        Assert.Equal((start.AddMinutes(15), start.AddMinutes(45), .3m), (gap.Start, gap.End, gap.Kwh));
+        Assert.Equal(2, await db.LiveMeasurements.CountAsync(m => m.PlantId == plant.Id && m.Source == DeviceCounterHistory.SocSource));
+        Assert.Equal(today, (await db.HistoryScans.AsNoTracking().SingleAsync(s => s.PlantId == plant.Id)).CounterDay);
+        Assert.Equal(1, source.DeviceCalls.Count(at => at == start));
+
+        clock.Now = Calendar.Utc(today.AddDays(1), Zone).AddMinutes(1);
+        await using var following = Open();
+        await new HistoryWorker(source, config, clock).Tick(following, plant, default);
+        Assert.Equal(end, source.DeviceCalls.Last());
+        Assert.Equal(1, await following.Readings.CountAsync(r => r.PlantId == plant.Id));
+    }
+
+    [Fact]
     public async Task ActivationUsesServerMappingAndKeepsOneInitialJobAcrossConfirmations()
     {
         await using var db = Open();
@@ -435,7 +494,13 @@ public class LiveImportTests
             handler(request);
     }
 
-    sealed class HistoryFixture : IHistorySource
+    sealed class TestClock(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    sealed class HistoryFixture : IHistorySource, IDeviceCounterSource
     {
         public TimeSpan Window { get; init; } = TimeSpan.FromMinutes(5);
         public int RefreshMinutes => 1440;
@@ -444,6 +509,15 @@ public class LiveImportTests
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<DateTimeOffset> Calls { get; } = [];
+        public List<DateTimeOffset> DeviceCalls { get; } = [];
+        public Func<DateTimeOffset, PointObservation[]>? DevicePoints { get; init; }
+
+        public Task<PointProbeResult> ReadDeviceHistory(Plant plant, string device, ProbePoint[] points,
+            DateTimeOffset start, DateTimeOffset end, int step, CancellationToken ct)
+        {
+            DeviceCalls.Add(start);
+            return Task.FromResult(new PointProbeResult("Gerät", end, DevicePoints?.Invoke(start) ?? []));
+        }
 
         public Task<Aggregate[]> ReadAggregates(Guid plant, DateTimeOffset start, DateTimeOffset end, CancellationToken ct) =>
             Task.FromResult<Aggregate[]>([]);

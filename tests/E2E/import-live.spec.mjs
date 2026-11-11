@@ -14,6 +14,7 @@ test('import preview and cancellation are separate actions', async ({ page }) =>
   await page.route(/\/api\/v1\/import-jobs(?:\/.*)?$/, async route => {
     const { pathname } = new URL(route.request().url())
     if (pathname.endsWith('/estimate')) {
+      expect(route.request().postDataJSON()).toMatchObject({ start: '2026-10-01', end: '2026-10-02' })
       previews++
       return route.fulfill({ json: { windows: 8, seconds: 120 } })
     }
@@ -30,7 +31,7 @@ test('import preview and cancellation are separate actions', async ({ page }) =>
   await page.goto('/?page=status&kind=day&anchor=2026-10-01')
   await page.getByText('Nachimport und Testimport', { exact: true }).click()
   await page.getByLabel('Importbeginn').fill('2026-10-01')
-  await page.getByLabel('Importende exklusiv').fill('2026-10-02')
+  await page.getByLabel('Letzter Importtag (einschließlich)').fill('2026-10-01')
   await page.getByRole('button', { name: 'Dauer schätzen' }).click()
   await expect(page.getByText(/8 Zeitfenster · Basisdauer ca. 2 Min/)).toBeVisible()
   expect(previews).toBe(1)
@@ -59,8 +60,8 @@ test('overview reads cache and signals visibility for its own tab', async ({ pag
   let gridValue = -1.2
   await page.route('**/api/v1/live/now', route => route.fulfill({ json: {
     pv: { ...missing, quality: 'unconfigured' }, load: missing, battery: missing,
-    pvDc: { ...missing, value: .84, measuredAt: '2026-10-01T12:00:00Z', quality: 'confirmed' },
-    inverterActive: { ...missing, value: -.16, measuredAt: '2026-10-01T12:00:00Z', quality: 'confirmed' },
+    pvDc: { ...missing, value: .36, measuredAt: '2026-10-01T12:00:00Z', quality: 'confirmed' },
+    inverterActive: { ...missing, value: 9.999, measuredAt: '2026-10-01T12:00:00Z', quality: 'confirmed' },
     soc: { ...missing, value: 0, quality: 'confirmed' }, pvSurplusKw: null, flowConfirmed: false,
     quality: 'repeated', fetchedAt: '2026-10-01T12:05:00Z',
     timing: { overviewVisible: true, cloudIntervalSeconds: 300, sourceMeasuredAt: '2026-10-01T12:00:00Z', nextEligibleAt: null, retryAt: null },
@@ -71,16 +72,20 @@ test('overview reads cache and signals visibility for its own tab', async ({ pag
     samples: [{ channel: 'grid', at: '2026-10-01T12:00:00Z', value: -1.2, source: 'live' }]
   } }))
   await page.goto('/?kind=day&anchor=2026-10-01')
-  await expect(page.getByText('1,2 kW', { exact: true })).toBeVisible()
+  await expect(page.getByText('1.200 W', { exact: true })).toBeVisible()
   await expect(page.getByText('Leer · 0 %')).toBeVisible()
-  await expect(page.getByText('PV-DC-Leistung am Wechselrichter', { exact: true })).toBeVisible()
+  await expect(page.getByText('360 W', { exact: true })).toBeVisible()
+  await expect(page.getByText(/^9\.999 W/)).toBeVisible()
+  await page.getByLabel('Quelle der Solarleistung').press('Enter')
+  await expect(page.getByText(/PV-DC-Leistung am Wechselrichter · AC-PV-Fluss/)).toBeVisible()
   await expect(page.getByText('AC-PV-Fluss nicht separat gemessen')).toBeVisible()
   await expect(page.getByText('Wechselrichter-Wirkleistung', { exact: true })).toBeVisible()
   await page.getByText('Messalter und Abrufstatus', { exact: true }).click()
   await expect(page.getByText(/keinen neueren Messwert/)).toBeVisible()
-  gridValue = -1.5
+  gridValue = -10
   await page.clock.fastForward(30_000)
-  await expect(page.getByText('1,5 kW', { exact: true })).toBeVisible()
+  await expect(page.getByText('10 kW', { exact: true })).toBeVisible()
+  await expect(page.locator('.live-grid')).toContainText('Einspeisung')
   await page.getByText('Heutigen Leistungsverlauf anzeigen').click()
   await expect(page.getByRole('img', { name: 'Heutiger Leistungsverlauf' })).toBeVisible()
   await expect.poll(() => signals.at(-1)?.visible).toBe(true)
@@ -91,10 +96,30 @@ test('overview reads cache and signals visibility for its own tab', async ({ pag
   await expect.poll(() => signals.at(-1)?.visible).toBe(false)
   gridValue = -2
   await page.clock.fastForward(30_000)
-  await expect(page.getByText('1,5 kW', { exact: true })).toBeVisible()
+  await expect(page.getByText('10 kW', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Datenstatus' }).click()
   await expect.poll(() => signals.at(-1)?.visible).toBe(false)
   expect(signals.at(-1).tab).toBe(signals[0].tab)
+})
+
+test('the selected local day displays stored samples without opening the compact panel', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-10-01T12:00:00Z'))
+  await page.route('**/api/v1/live/today', route => route.fulfill({ json: {
+    start: '2026-09-30T22:00:00Z', end: '2026-10-01T22:00:00Z',
+    samples: [['pvDc', .36], ['load', 1.2], ['grid', -.2], ['battery', .3], ['soc', .52]]
+      .map(([channel, value]) => ({ channel, value, at: '2026-10-01T12:00:00Z', source: 'live' })),
+    gaps: [{ channel: 'pvDc', start: '2026-10-01T11:00:00Z', end: '2026-10-01T11:15:00Z', reason: 'poll-outage' }],
+  } }))
+  await page.goto('/?kind=day&anchor=2026-10-01')
+  await expect(page.getByRole('img', { name: 'Gespeicherte Messwerte des laufenden Tages' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Heutiger Leistungsverlauf' })).toHaveCount(0)
+  await page.getByText('Quellen und Messzeiten', { exact: true }).click()
+  for (const name of ['Solarleistung (DC)', 'Hausverbrauch', 'Netz', 'Batterie', 'Ladezustand'])
+    await expect(page.getByText(name + ' · 1 Werte', { exact: false })).toBeVisible()
+  await page.getByText(/Erkannte Live-Lücken/).click()
+  await expect(page.getByText(/Solarleistung \(DC\).*Abrufunterbrechung/)).toBeVisible()
+  await page.getByText('Heutigen Leistungsverlauf anzeigen').click()
+  await expect(page.getByRole('img', { name: 'Heutiger Leistungsverlauf' })).toBeVisible()
 })
 
 test('Demo renders the shared live dashboard and synthetic probe', async ({ page, request }) => {
@@ -111,7 +136,7 @@ test('Demo renders the shared live dashboard and synthetic probe', async ({ page
   await page.getByText('Live-Diagnose mit Demodaten', { exact: true }).click()
   await expect(page.getByText('Hausverbrauch · 13119', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Live-Probe abrufen' }).click()
-  await expect(page.getByText(/PV-Erzeugung .* kW · Hausverbrauch .* kW/)).toBeVisible()
+  await expect(page.getByText(/PV-Erzeugung .* W · Hausverbrauch .* W/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Live-Zuordnung speichern' })).toHaveCount(0)
 })
 
@@ -222,9 +247,12 @@ test('Sungrow daily totals stay separate from incomplete interval charts', async
     await route.fulfill({ json: {
       ...response,
       report: { ...response.report, resolutionMinutes: 15, warnings: ['Teildaten. Energiemengen beziehen sich auf erfasste Intervalle.'],
+        counterGaps: monthly ? [] : [{ channel: 'load', start: '2026-11-06T10:15:00Z', end: '2026-11-06T10:45:00Z', kwh: .3 }],
+        historicalSoc: monthly ? [] : [{ at: '2026-11-06T10:00:00Z', value: 0 }, { at: '2026-11-06T10:45:00Z', value: .45 }],
         metrics: { ...metrics, coverage: 0, pv: unavailable, load: full(22.5), import: unavailable, export: unavailable, autarky: null, retention: null },
         providerMetrics: { ...metrics, coverage: monthly ? .2 : 1, pv: full(16.6), load: full(22.5), import: full(6.5), export: full(0), autarky: null, retention: null } },
       buckets: [{ start: '2026-11-06T10:00:00Z', local: '11:00', load: 1 }],
+      providerBuckets: monthly ? [{ day: '2026-11-06', pv: 16.6, load: 22.5 }] : null,
     } })
   })
   await page.route('**/api/v1/heatmap?*', route => route.fulfill({ json: { points: [
@@ -252,6 +280,9 @@ test('Sungrow daily totals stay separate from incomplete interval charts', async
   await expect(balance).toContainText('0 von 24 Stunden')
   await expect(page.getByText(/Keine Minutenmesswerte für Netzbezug, Einspeisung, Ladezustand/)).toBeVisible()
   await expect(page.getByRole('img', { name: 'Gemeldeter SOC und Netzleistung auf lokaler Uhrzeitachse' })).toHaveCount(0)
+  await expect(page.getByRole('img', { name: 'Historische Ladezustand-Stichproben' })).toBeVisible()
+  await page.getByText('1 belegte Zeitfenster anzeigen', { exact: true }).click()
+  await expect(page.getByText(/Hausverbrauch.*0,3 kWh/)).toBeVisible()
   const info = page.getByLabel('Details zu Autarkiegrad')
   await info.focus()
   await info.press('Enter')
@@ -266,6 +297,11 @@ test('Sungrow daily totals stay separate from incomplete interval charts', async
   await heatmap.selectOption('export')
   await expect(page.getByRole('img', { name: 'Heatmap nach Tag, Stunde und UTC-Abstand' })).toBeVisible()
   await page.goto('/?kind=month&anchor=2026-11-06')
+  await expect(page.getByLabel('Datenquelle')).toHaveValue('daily')
+  await page.getByText('Diagrammdaten als Tabelle').click()
+  await expect(page.getByRole('table').first()).toContainText('16,6')
+  await page.getByLabel('Datenquelle').selectOption('intervals')
+  await expect(page.getByRole('table').first()).not.toContainText('16,6')
   await page.getByLabel('Details zu Autarkiegrad').click()
   await expect(kpis.locator('article').filter({ hasText: 'Autarkiegrad' }))
     .toContainText('Zu wenig gemeinsame Messdaten für den gewählten Zeitraum')

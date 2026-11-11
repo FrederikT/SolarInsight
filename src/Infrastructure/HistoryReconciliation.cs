@@ -21,6 +21,12 @@ public sealed class HistoryScan
     public DateOnly NextDay { get; set; }
     public DateTimeOffset Due { get; set; }
     public DateTimeOffset? LastSuccess { get; set; }
+    public DateOnly? CounterDay { get; set; }
+    public DateTimeOffset? CounterUntil { get; set; }
+    public DateTimeOffset? CounterDue { get; set; }
+    public string? CounterData { get; set; }
+    public int CounterAttempts { get; set; }
+    public string? CounterProfile { get; set; }
 }
 
 public static class HistoryReconciliation

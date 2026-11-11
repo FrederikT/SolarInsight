@@ -14,7 +14,7 @@ public record LiveActivation(string Plant, string? Zone = null, int Page = 1);
 
 public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionProvider protection,
     SungrowDiscovery sungrow, IConfiguration configuration, RuntimeOptions runtime, ILogger<LiveProvider> logger)
-    : IHistorySource
+    : IHistorySource, IDeviceCounterSource
 {
     readonly IDataProtector protector = protection.CreateProtector("sungrow-tokens-v1");
     readonly SemaphoreSlim authLock = new(1, 1);
@@ -403,15 +403,23 @@ public sealed class LiveProvider(IServiceScopeFactory scopes, IDataProtectionPro
         var (start, end) = ProbeWindow(input.Day, input.Start, input.End, zone, input.StepMinutes);
         try
         {
-            var (keys, token) = await Access(ct);
-            var raw = await Send(c => sungrow.DeviceMinutes(keys.AppKey, keys.AccessKey, token, input.Device,
-                points.Select(point => point.Id).ToArray(), start, end, zone, c, input.StepMinutes), ct);
-            return PointProbe.Minutes(source, raw, input.Device, points, zone, start, end, DateTimeOffset.UtcNow);
+            return await ReadDeviceHistory(plant, input.Device, points, start, end, input.StepMinutes, ct);
         }
         catch (ProviderFailure failure)
         {
             return PointProbe.Failed(source, points, DateTimeOffset.UtcNow, failure);
         }
+    }
+
+    public async Task<PointProbeResult> ReadDeviceHistory(Plant plant, string device, ProbePoint[] points,
+        DateTimeOffset start, DateTimeOffset end, int step, CancellationToken ct)
+    {
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
+        var (keys, token) = await Access(ct);
+        var raw = await Send(c => sungrow.DeviceMinutes(keys.AppKey, keys.AccessKey, token, device,
+            points.Select(point => point.Id).ToArray(), start, end, zone, c, step), ct);
+        return PointProbe.Minutes($"Gerätehistorie · {step} Minuten", raw, device, points,
+            zone, start, end, DateTimeOffset.UtcNow);
     }
 
     public async Task<object> Probe(Plant plant, ProbeRequest input, CancellationToken ct)

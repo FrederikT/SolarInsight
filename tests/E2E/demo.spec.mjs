@@ -32,6 +32,8 @@ test('A20/A23 Demo: Zeitraum, Tagesdetail, Speicher, kombinierter Lauf und Expor
   const csv = await downloadCsv
   expect(await readFile(await csv.path(), 'utf8')).toContain('PV_kWh')
   await page.getByRole('button', { name: 'Speicher & Potenzial', exact: true }).click()
+  await expect(page.getByRole('img', { name: 'Gemessene Einspeisung nach lokaler Stunde' })).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: 'Im Ladefenster nutzbar (kWh)', exact: true })).toBeVisible()
   await page.getByLabel('Speicher ändern').check()
   await page.getByLabel('Kapazität vor Reserve (kWh)').fill('16')
   await page.getByRole('button', { name: 'Simulation starten' }).click()
@@ -47,7 +49,8 @@ test('A20/A23 Demo: Zeitraum, Tagesdetail, Speicher, kombinierter Lauf und Expor
   expect(json.parameters.shift.daily).toBe(1)
   expect(json.parameters.added.daily).toBe(2)
   await page.getByText('Einzelne Tagesabweichungen').click()
-  await page.getByRole('table').last().getByRole('button').first().click()
+  await page.locator('details').filter({ hasText: 'Einzelne Tagesabweichungen' })
+    .getByRole('table').getByRole('button').first().click()
   await page.getByLabel('Szenario einblenden').check()
   await expect(page.getByRole('heading', { name: 'Tagesdetail', exact: true })).toBeVisible()
   await page.setViewportSize({ width: 375, height: 800 })

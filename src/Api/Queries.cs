@@ -9,11 +9,18 @@ namespace SolarInsight.Api;
 
 public record ViewPeriod(string Kind, DateOnly? Anchor = null, DateOnly? Start = null, DateOnly? End = null);
 public record Report(Period Period, string TimeZone, string Revision, double? ResolutionMinutes, Metrics Metrics,
-    Cost Cost, bool Incomplete, string[] Warnings, Metrics? ProviderMetrics, decimal? ProviderExportDifference);
+    Cost Cost, bool Incomplete, string[] Warnings, Metrics? ProviderMetrics, decimal? ProviderExportDifference)
+{
+    public DeviceCounterHistory.CounterSpan[] CounterGaps { get; init; } = [];
+    public SocSample[] HistoricalSoc { get; init; } = [];
+}
+public record SocSample(DateTimeOffset At, decimal Value);
 public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[] Rows, Tariffs Tariffs,
     Battery? Battery, bool KnownPaths, bool ConfigurationBoundary, string Revision, Aggregate[] Aggregates)
 {
     public (DateTimeOffset Since, Battery? Battery)[] BatteryTimeline { get; init; } = [];
+    public DeviceCounterHistory.CounterSpan[] CounterGaps { get; init; } = [];
+    public SocSample[] HistoricalSoc { get; init; } = [];
 
     public Battery? BatteryFor(Interval row)
     {
@@ -60,7 +67,11 @@ public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[]
             warnings.Add("Gerätezähler liefern Energiedifferenzen im Messraster. PV-Ertrag daraus bestätigt keine getrennte AC-PV-Leistung.");
         if (provider is not null) warnings.Add("Sungrow-Tagesaggregate werden separat von integrierten Zeitreihen ausgewiesen.");
         return new(period, Zone.Id, Revision, rows.Length == 0 ? null :
-            rows.Max(r => (r.End - r.Start).TotalMinutes), metrics, cost, incomplete, warnings.ToArray(), provider, exportDifference);
+            rows.Max(r => (r.End - r.Start).TotalMinutes), metrics, cost, incomplete, warnings.ToArray(), provider, exportDifference)
+        {
+            CounterGaps = period == Period ? CounterGaps : [],
+            HistoricalSoc = period == Period ? HistoricalSoc : []
+        };
     }
 }
 
@@ -111,6 +122,12 @@ public sealed class Queries(Store db, RuntimeOptions options)
         var prices = await db.Prices.AsNoTracking().Where(t => t.PlantId == plant.Id).ToArrayAsync(ct);
         var aggregates = await db.Aggregates.AsNoTracking().Where(a => a.PlantId == plant.Id && a.Origin == "provider" &&
             a.Start >= start && a.End <= end).ToArrayAsync(ct);
+        var counterGaps = await db.Aggregates.AsNoTracking().Where(a => a.PlantId == plant.Id &&
+            a.Origin == DeviceCounterHistory.GapOrigin && a.Start >= start && a.End <= end).OrderBy(a => a.Start)
+            .Select(a => new DeviceCounterHistory.CounterSpan(a.Point, a.Start, a.End, a.Kwh)).ToArrayAsync(ct);
+        var socSamples = period.Days == 1 ? await db.LiveMeasurements.AsNoTracking().Where(m => m.PlantId == plant.Id &&
+            m.Source == DeviceCounterHistory.SocSource && m.MeasuredAt >= start && m.MeasuredAt < end)
+            .OrderBy(m => m.MeasuredAt).Select(m => new SocSample(m.MeasuredAt, m.Value)).ToArrayAsync(ct) : [];
         var connection = plant.ProviderId is null ? null : await db.Connections.AsNoTracking()
             .SingleOrDefaultAsync(c => c.PlantId == plant.Id, ct);
         bool knownPaths = plant.Synthetic || (connection is not null &&
@@ -120,13 +137,14 @@ public sealed class Queries(Store db, RuntimeOptions options)
             configurations.Any(c => c.Since > period.Start), plant.Revision.ToString(CultureInfo.InvariantCulture), aggregates)
         {
             BatteryTimeline = configurations.Select(c => (Calendar.Utc(c.Since, zone),
-                JsonSerializer.Deserialize<Battery>(c.Parameters))).ToArray()
+                JsonSerializer.Deserialize<Battery>(c.Parameters))).ToArray(),
+            CounterGaps = counterGaps, HistoricalSoc = socSamples
         };
         await snapshot.CommitAsync(ct);
         return result;
     }
 
-    public static object[] Buckets(DataView view)
+    public static object[] Buckets(DataView view, bool providerDaily = false)
     {
         if (view.Period.Days <= 1)
             return DayRows(view).Select(r => (object)new
@@ -146,10 +164,10 @@ public sealed class Queries(Store db, RuntimeOptions options)
             var next = monthly ? key.AddMonths(1) : key.AddDays(1);
             var end = next < view.Period.End ? next : view.Period.End;
             var report = view.CreateReport(new(cursor, end), byPeriod[key].ToArray());
-            var m = report.Metrics;
-            result.Add(new { day = cursor, pv = m.Pv.Kwh, load = m.Load.Kwh, import = m.Import.Kwh,
-                export = m.Export.Kwh, charge = m.Charge.Kwh, discharge = m.Discharge.Kwh, soc = m.SocMean,
-                cost = report.Cost.Net, coverage = m.Coverage });
+            var m = providerDaily ? report.ProviderMetrics : report.Metrics;
+            result.Add(new { day = cursor, pv = m?.Pv.Kwh, load = m?.Load.Kwh, import = m?.Import.Kwh,
+                export = m?.Export.Kwh, charge = m?.Charge.Kwh, discharge = m?.Discharge.Kwh, soc = m?.SocMean,
+                cost = report.Cost.Net, coverage = m?.Coverage });
             cursor = end;
         }
         return result.ToArray();
@@ -169,12 +187,26 @@ public sealed class Queries(Store db, RuntimeOptions options)
         if (cursor < end) yield return new(cursor, end, null, null, Quality: "gap");
     }
 
-    public static object[] Heatmap(DataView view) => view.Rows.GroupBy(row =>
+    public static object[] Heatmap(DataView view)
     {
-        var local = TimeZoneInfo.ConvertTime(row.Start, view.Zone);
-        return (Day: DateOnly.FromDateTime(local.DateTime), local.Hour, local.Offset);
-    }).Select(g => (object)new { day = g.Key.Day, hour = g.Key.Hour,
-        offset = g.Key.Offset.ToString(), import = g.Any(r => r.Import.HasValue) ? g.Sum(r => r.Import) : null,
-        export = g.Any(r => r.Export.HasValue) ? g.Sum(r => r.Export) : null }).ToArray();
+        (DateOnly Day, int Hour, TimeSpan Offset) Key(DateTimeOffset at)
+        {
+            var local = TimeZoneInfo.ConvertTime(at, view.Zone);
+            return (DateOnly.FromDateTime(local.DateTime), local.Hour, local.Offset);
+        }
+        var grouped = view.Rows.ToLookup(row => Key(row.Start));
+        var result = new List<object>();
+        var start = Calendar.Utc(view.Period.Start, view.Zone);
+        var end = Calendar.Utc(view.Period.End, view.Zone);
+        for (var at = start; at < end; at = at.AddHours(1))
+        {
+            var key = Key(at);
+            var rows = grouped[key];
+            result.Add(new { day = key.Day, hour = key.Hour, offset = key.Offset.ToString(),
+                import = rows.Any(row => row.Import.HasValue) ? rows.Sum(row => row.Import) : null,
+                export = rows.Any(row => row.Export.HasValue) ? rows.Sum(row => row.Export) : null });
+        }
+        return result.ToArray();
+    }
 }
 

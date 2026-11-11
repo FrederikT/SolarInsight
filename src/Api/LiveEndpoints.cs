@@ -75,8 +75,9 @@ public static class LiveEndpoints
     public static DaySample[] Combine(Reading[] history, LiveMeasurement[] moments)
     {
         var result = new List<DaySample>();
-        foreach (var row in history.Where(r => r.SourceRevision == "sungrow-minutes-v1" &&
-            r.Quality is "mean-power" or "trapezoid" && r.End > r.Start))
+        foreach (var row in history.Where(r => r.End > r.Start &&
+            (r.SourceRevision == DeviceCounterHistory.Source ||
+             r.SourceRevision == "sungrow-minutes-v1" && r.Quality is "mean-power" or "trapezoid")))
         {
             decimal hours = (decimal)(row.End - row.Start).TotalHours;
             var channels = new (string Channel, decimal? Value)[] {

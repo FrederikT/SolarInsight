@@ -8,7 +8,7 @@
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
 | Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. |
-| Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | Entscheidung des Eigentümers offen. |
+| Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
 
@@ -62,7 +62,6 @@
 ## Fortsetzung
 
 1. Die Restpunkte der Sungrow-Abnahme und die Nutzung gespeicherter Stichproben für den laufenden Tag klären. [Abnahme und nächste Schritte](today-acceptance.md).
-2. Repository-Lizenz durch den Eigentümer festlegen.
 
 Die manuelle OAuth-Codeübergabe, bekannte Modellgrenzen und Schlüsselhaltung sind in der Architektur und Betriebsdokumentation beschrieben. Messungen und Befehle stehen in verification.md.
 
@@ -281,7 +280,49 @@ Der Browser-Test übernimmt neue Cache-Daten nach 30 Sekunden bei sichtbarem Tab
 
 Die private Instanz meldete im Hintergrund 600 Sekunden als frühesten nächsten Cloud-Abruf. Der gespeicherte Verlauf vom 10. November zeigt für den beobachteten Sprung zwei erfolgreiche Abrufe um 09:20:49 und 09:25:54 Uhr in Europe/Berlin. Die zugehörigen Quellmessungen stammen von 09:15 und 09:25 Uhr. Beide Abrufe hatten keine Wiederholungswartezeit. Der Zehn-Minuten-Sprung lag im Quellzeitstempel. Zwischen den Abrufen lagen rund fünf Minuten.
 
+### LIVE-02 und UX-08 · Laufender Tagesverlauf und Leistungseinheiten
+
+Die normale Ansicht des laufenden Tags zeigt gespeicherte Live-Stichproben ohne Handimport. Sie verwendet denselben Endpunkt und dieselbe Diagrammkomponente wie der aufklappbare Bereich „Heute“. Die Kanäle zeigen Solarleistung (DC), Hausverbrauch, Netz, Batterie und Ladezustand. Wechselrichter-Wirkleistung erscheint separat. Symbole und Legende unterscheiden Stichproben und historische Intervalle. Quellen, Messzeiten und erkannte Live-Lücken lassen sich aufklappen. Vorläufige Energiesummen stammen aus belegten historischen Intervallen. Der aktuelle Tag ohne solche Intervalle zeigt einen Hinweis.
+
+„Jetzt“ zeigt die Kachel „Solarleistung“. Für das bestätigte DC-Profil sind Messort und fehlender separater AC-PV-Fluss im Info-Symbol erläutert. Die Kachel zeigt die Quellzeit. Leistungswerte, Achsen, Tooltips und Tabellen verwenden unter 10.000 W Watt und ab 10.000 W Kilowatt. Bei gerichteten Werten entscheidet der Betrag. Ladezustand bleibt in Prozent und Energie in kWh. Eingabefelder behalten ihre fest bezeichneten Einheiten.
+
+ESLint, TypeScript, Vite, 25 Unit-Tests und 40 Integrations- und Vertragstests bestanden. Die Demo auf Port 8080 und die private Instanz auf Port 8081 wurden über ihre bestehenden Startwege neu gebaut und gestartet. Beide meldeten `ready`. Der private Browser-Smoke-Test bestätigte den automatisch sichtbaren Tagesverlauf, gespeicherte DC-Stichproben und den Quellhinweis. Die Abnahme mit zwei neuen Hintergrundzyklen bei geschlossenem Browser und der automatische Nachimport nach Tageswechsel stehen aus.
+
+Der erste Browserlauf scheiterte am alten Ort der Minutenabdeckung. Der Test öffnet jetzt „Hinweise zur Datengrundlage“. Danach bestanden 13 Linux-Playwright-Tests einschließlich Demo-Kalender, Simulation, Export und neuer Tagesansicht sowie der PostgreSQL-Restore. Auf dem finalen Build bestanden der private Smoke-Test sowie die gezielten Browserprüfungen der Tagesansicht und Live-Aktualisierung erneut. Die Live-Fixture prüft 360 W, 9.999 W, 10 kW, Einspeiserichtung, 0 % SOC und den per Tastatur bedienbaren Quellhinweis.
+
+### DATA-01 und LIVE-02 · Automatischer Zählerimport und Hintergrundabnahme
+
+Die Migration `AutomaticDeviceCounters` ergänzt einen persistenten Geräte-Cursor im bestehenden historischen Hintergrunddienst. Bestätigte Profile starten bei den letzten 30 abgeschlossenen lokalen Kalendertagen und prüfen danach neu abgeschlossene Tage. Ein Gerätefenster umfasst höchstens drei Stunden. Der Dienst wartet mindestens eine Minute zwischen Zählerfenstern und nutzt den gemeinsamen Provider-Abrufabstand. Die private Instanz startete am 10. November die Rückschau ab dem 11. Oktober. Der Cursor erreichte 06:00 Uhr und enthielt für jeden der sechs Wh-Zähler 25 Quellwerte. Das belegt historische Abrufe für diesen Tag, keine garantierte Rückschau oder vollständige Tagesabdeckung.
+
+Zählerdifferenzen über genau einen Rasterabstand werden als Intervalle gespeichert. Belastbare Summen über mehrere fehlende Intervalle erhalten einen eigenen Zeitraum und bleiben getrennt von Viertelstundenprofil, Tagesaggregaten und deren Summen. Die Kontrolle gegen Sungrow-Tagesaggregate erfolgt je Kanal. Rücksetzungen, unplausible Sprünge und fehlende Grenzen bleiben offen. Der bestätigte Geräte-SOC-Punkt 13141 wird historisch als Anteil mit Gerätezeit gelesen, sofern die Antwort die bekannte einheitenlose Skala liefert. Historischer SOC erscheint im Tagesdetail als einzelne Stichproben.
+
+Der PostgreSQL-Integrationstest prüft den 30-Tage-Start, die persistente Wiederaufnahme mit neuem Kontext, das Ausbleiben doppelter Intervalle, eine getrennte Lückensumme und den nächsten abgeschlossenen Tag mit simulierter Uhr. Der echte Tageswechsel ist noch nicht beobachtet. Am jüngsten abgeschlossenen Tag bleibt die letzte Grenze offen, wenn der aktuelle Kalendertag für die Historienroute noch gesperrt ist.
+
+Nach dem Schließen des privaten Prüf-Browsers wurden am 10. November um 19:22:25, 19:32:30 und 19:42:35 Uhr (Europe/Berlin) neue Quellmessungen für 19:20, 19:30 und 19:40 Uhr bestätigt. Beim Wiederöffnen zeigte der private Browser die gespeicherten Tageswerte und DC-Stichproben. Demo und private Instanz wurden mit der Migration neu gebaut und meldeten `ready`. ESLint, TypeScript, Vite, 25 Unit-Tests und 41 Integrations- und Vertragstests bestanden.
+
+13 Linux-Playwright-Tests und der PostgreSQL-Restore bestanden. Die Browser-Fixture prüfte die Darstellung einer getrennten Zähler-Lückensumme und historischer SOC-Stichproben neben der weiterhin unvollständigen Intervallansicht.
+
+Das tatsächlich gebuchte Sungrow-Kontingent ist aus den vorliegenden Antworten und dem Anlagenportal nicht ablesbar. Für A25 bleibt ein Nachweis aus der Entwickler-App erforderlich. Die AC-PV-Bilanz und die private Simulation bleiben wie vereinbart zurückgestellt. [Sungrow Developer Portal](https://developer-api.isolarcloud.com/)
+
+### DATA-01, LIVE-02, UX-04, UX-05 und POT-01 · Befunde vom 11. November
+
+Die private Datenbank enthält um 19:55 Uhr am 10. November 2.264 W Batterieentladung, 1.629 W Hausverbrauch und 635 W Einspeisung. Um 20:00 Uhr waren es 2.600 W, 1.961 W und 639 W. PV-DC war jeweils 0 W. Die Wechselrichter-Wirkleistung entsprach der Batterieentladung. Um 19:45 und 20:05 Uhr lag die Batterieentladung mit 572 und 806 W knapp unter dem Verbrauch von 580 und 809 W. Der Netzbezug deckte die Differenzen. Die „Jetzt“-Ansicht nennt bei gleichzeitiger Messung die Einspeisung neben der höheren Entladung. Sie setzt dafür keinen bestätigten AC-PV-Pfad voraus.
+
+Am 10. November konnten Live-Stichproben erscheinen, obwohl der Historienabruf für den laufenden Tag noch keine Tagesaggregate liefert. Bei der Nachprüfung am 11. November lagen für den 10. November 30 Lastintervalle und weiterhin keine Tagesaggregate vor. Für die private Anlage sind außerdem keine Tarife gespeichert. Die Oberfläche benennt die für Energie, Quoten und Kosten fehlenden Daten. „Heutiges Datum öffnen“ wählt die Anlagenzeitzone. Ein Einzeltag erscheint einmal mit Jahr. Der ursprünglich angezeigte Oktoberzeitraum ist ohne die damalige URL oder einen Screenshot nicht reproduzierbar. Die Live-Kurven verbinden benachbarte Messungen und unterbrechen die Linie bei erkannten Lücken oder mehr als 15 Minuten Abstand.
+
+Für KW 45 sind sieben Sungrow-Tagesaggregate mit zusammen 78,2 kWh PV gespeichert. Vor den gezielten Gegenproben enthielten 525 Intervalle Last. Gemeinsame PV- und Lastwerte lagen nur in acht Viertelstunden vom 6. November (11:00–13:00 Uhr, 6,8 kWh PV) vor. Der Datenstatus bezeichnet die Lücke jetzt als fehlende gemeinsame PV- und Verbrauchsreihe und zeigt Kanalzahlen. Das Mehrtagesdiagramm verwendet standardmäßig die Sungrow-Tageswerte und bietet die Intervallsummen als wählbare Quelle an. Die Energieflussanalyse benötigt weiterhin bestätigte AC-Pfade und gleichzeitig gemessene Werte. Tagesaggregate reichen dafür fachlich nicht aus.
+
+Der manuelle Auftrag vom 10. November speicherte den Zeitraum 2. November 00:00 bis 8. November 00:00 Uhr mit exklusivem Ende. Er endete erfolgreich mit 53 Fenstern, acht leeren Fenstern und ohne geänderte Datensätze. Der reguläre Anlagenimport las im aktiven Profil Minutenwerte für Hausverbrauch. Die Oberfläche nimmt jetzt einen inklusiven letzten Importtag entgegen. Gerätezähler ergänzt die historische Abstimmung. Bei der Prüfung lief ihre einmalige Rückschau am 20. Oktober. Autorisierte Geräteproben für 2. und 8. November 11:00–13:00 Uhr lieferten neun Zählerstände pro Kanal sowie neun beziehungsweise sieben bestätigende Leistungspunkte. Damit ist in diesen Stichproben eine zusätzliche Quelle belegt. Am 9. November sind 83 gemeinsame Viertelstunden und sechs Tagesaggregate gespeichert. Die verbleibenden Lücken sind in der Anzeige weiterhin sichtbar.
+
+Der gezielte Gerätezähler-Nachimport übernahm in diesen Fenstern acht Intervalle am 2. November und fünf am 8. November. Beide Fenster bestanden die Kontrolle gegen die Tagesaggregate. Die Intervallsumme der KW 45 stieg dadurch um 4,0 kWh PV auf 10,8 kWh. Die Quelle lässt sich in den Einstellungen unter „Diagnose und Messpunkte“ mit der Gerätehistorie für ein konkretes Fenster erneut prüfen.
+
+**Abgleich mit der Spezifikation.** Speichererweiterung, Kapazitäts-Nutzen-Kurve, Verbrauchsverschiebung, Zusatzbedarf mit Ladefenster, beide Deckungsmodi, Energieherkunft, Kostenvergleich, kombinierte Szenarien und optionale Amortisation sind vorhanden. Die Demo prüft die kombinierte Simulation und Exporte. Die private Speichersimulation wartet auf bestätigte AC-Pfade und vollständige Modellparameter. Speicherereignisse benötigen je nach Typ Netzleistung, SOC und bestätigte Speichergrenzen. Die geräteunabhängige Überschussanalyse hatte Gesamtsumme und Aufnahmegrenze. Sie zeigt jetzt zusätzlich die Verteilung nach Tag, lokaler Stunde, Monat und Jahreszeit. Der Monatsvergleich weist die im Ladefenster theoretisch nutzbare Einspeisung und die erfassten Stunden aus. Die Heatmap erklärt Einheit, Achsen, Farben und den Unterschied zwischen gemessener Null und fehlendem Intervall. [Ursprüngliche Anforderungen](../SolarInsight_Spezifikation.md)
+
+ESLint, TypeScript, Vite, 25 Unit-Tests, 41 Integrations- und Vertragstests und 13 Linux-Playwright-Tests bestanden. Der erste Playwright-Lauf griff durch die zusätzliche Monatstabelle auf die falsche Tabelle zu. Nach Eingrenzung auf den Abschnitt mit Tagesabweichungen bestand der vollständige Lauf. Der PostgreSQL-Backup-Restore bestand mit einer Testanlage und einem Tarif. Demo und private Instanz wurden über die bestehenden Startwege neu gebaut und gestartet. Beide meldeten `ready`. Im Browser der privaten Instanz wurden der 10. November als Einzeldatum, der Tagesverlauf mit realen Stichproben, die KW 45 mit sieben Tageswerten und 78,2 kWh PV, Quellenwahl, Heatmap und Potenzialansicht geprüft.
+
 ### Lokale Bereitstellung
+
+Vor der Zusammenführung auf `main` wurden TypeScript, ESLint, der Vite-Build, 25 Unit-Tests und 41 Integrationstests mit einer frischen PostgreSQL-Testdatenbank erneut geprüft. Beide bestehenden lokalen Instanzen meldeten HTTP 200 auf `/health/ready`.
 
 TypeScript, ESLint, Vite und der .NET-Release-Publish liefen durch. Ein Playwright-Lauf gegen die lokale Demo ergab zehn bestandene Tests und einen übersprungenen privaten Anmeldetest. Beim erneuten Lauf erhielt der allgemeine Demoablauf vor dem CSV-Export HTTP 429. Die übrigen neun Tests bestanden. Der gezielte Browser-Test für Tages- und Monatsabdeckung sowie Heatmap-Leerzustand und gemessene Null bestand auch separat. Der Live-Cache-Test deckte 0 % SOC ab.
 

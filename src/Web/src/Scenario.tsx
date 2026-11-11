@@ -76,6 +76,8 @@ export function ScenarioEditor({ period, simulation, setSimulation, drill }: {
       } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
     }}>
       <fieldset><legend>Speicher</legend>{toggle('battery', 'Speicher ändern')}
+        <p>Gib die geplante gesamte Batteriekapazität ein. Das Ergebnis zeigt vermiedenen Netzbezug und die
+          modellierte Kostenänderung. Die Kapazitätskurve vergleicht mehrere Größen im selben Zeitraum.</p>
         {form.battery && <><Numeric label="Kapazität vor Reserve (kWh)" value={form.profile.capacity} max={500}
           change={capacity => update('profile', { ...profile, capacity })} />
           <p>Nutzbares Fenster {number(profile.capacity * (profile.maxSoc - profile.minSoc))} kWh</p>
@@ -87,6 +89,7 @@ export function ScenarioEditor({ period, simulation, setSimulation, drill }: {
         {form.curve && numeric('curveMax', 'Maximale Kapazität (kWh)', 500)}
       </fieldset>
       <fieldset><legend>Verbrauchsverschiebung</legend>{toggle('shift', 'Verbrauch verschieben')}
+        <p>Lege fest, wie viele kWh pro Tag in ein anderes Zeitfenster verschoben werden dürfen. Die Gesamtnachfrage bleibt gleich.</p>
         {form.shift && <><p>Obergrenze unter den gewählten Annahmen. Tatsächliche Geräteverfügbarkeit ist unbekannt.</p>
           <div className="fields">{numeric('dailyShift', 'Tagesbudget (kWh)', 100)}{time('targetFrom', 'Ziel ab')}{time('targetTo', 'Ziel bis')}</div>
           <details><summary>Erweiterte Verschiebungsparameter</summary><div className="fields">
@@ -94,6 +97,8 @@ export function ScenarioEditor({ period, simulation, setSimulation, drill }: {
             {time('sourceFrom', 'Quelle ab')}{time('sourceTo', 'Quelle bis')}</div></details></>}
       </fieldset>
       <fieldset><legend>Zusatzbedarf</legend>{toggle('added', 'Zusatzverbrauch ergänzen')}
+        <p>Für ein Elektroauto entsprechen Tagesziel, Aufnahmeleistung und Verfügbarkeitsfenster den kWh je Ladetag,
+          der Ladeleistung und den Stunden am Ladepunkt.</p>
         {form.added && <><div className="fields">{numeric('dailyAdded', 'Tagesziel (kWh)', 500)}{numeric('addedKw', 'Aufnahmeleistung (kW)', 100)}
           {time('addedFrom', 'Verfügbar ab')}{time('addedTo', 'Verfügbar bis')}</div>
           {check('full', 'Bedarf vollständig decken')}

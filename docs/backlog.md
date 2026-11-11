@@ -54,7 +54,7 @@ Im Tagesverlauf und in den Speicher- und Netzansichten je Kanal erklären, welch
 
 ## DATA-01 · Historische Sungrow-Kanäle verifizieren und gezielt nachladen
 
-**Status:** Teilgeprüft. Verfügbare Zählerintervalle für den 9. November wurden über das bisherige Mittagsfenster hinaus nachgeladen. Ein gezielter Nachimport mit Vorschau ist in der Oberfläche erreichbar. Quelllücken und historischer Ladezustand bleiben offen. [Befund](implementation-status.md#data-01-und-data-02--erweiterter-nachimport-und-anzeige).
+**Status:** Automatischer Zählerimport, separate Lückensummen und historische SOC-Stichproben sind implementiert. Tageswechsel und Wiederanlauf sind mit PostgreSQL und Provider-Fixtures geprüft. Die private 30-Tage-Rückschau läuft. Der echte Tagesabschluss und die vom Provider abhängigen Quelllücken bleiben offen. [Befund](implementation-status.md#data-01-und-live-02--automatischer-zählerimport-und-hintergrundabnahme).
 
 Für den 1., 4. und 6. November 2026 zuerst lokal je Kanal die gespeicherten Tagesaggregate und Intervalle prüfen. Für den 6. November ist eine autorisierte Probe mit allen sechs Tageskanälen dokumentiert. Im geprüften 15-Minuten-Fenster waren nur Last und Anlagenwirkleistung verfügbar. Fehlende historische PV-Leistung, Netzleistung mit Richtung, Batterieleistung und SOC anhand autorisierter Proben mit iSolarCloud abgleichen. Pro Kanal zwischen fehlender Zuordnung, fehlender Providerfreigabe, ausbleibenden Providerwerten und einer lokalen Importlücke unterscheiden.
 
@@ -106,13 +106,13 @@ Der sichtbare Browser liest den lokalen Cache alle 30 Sekunden. Der direkte Sung
 
 ## LIVE-02 · Laufenden Tag mit gespeicherten Messwerten anzeigen
 
-**Status:** Offen. Hintergrundabrufe und gespeicherte Stichproben sind an der privaten Anlage belegt. Der normale Tagesverlauf liest diese Stichproben derzeit nicht. [Befund und Abnahme](today-acceptance.md#laufender-tag).
+**Status:** Erledigt. Private Hintergrundzyklen und anschließendes Wiederöffnen der Tagesansicht sind belegt. Der automatische Tagesabschluss wird unter DATA-01 geführt. [Nachweis](implementation-status.md#data-01-und-live-02--automatischer-zählerimport-und-hintergrundabnahme).
 
 **Abnahme.** Die Tagesübersicht zeigt beim Öffnen des heutigen Datums vorhandene Stichproben für Solarleistung (DC), Last, Netz, Batterie und Ladezustand. Zeit, Quelle und Lücken sind erkennbar. Der Dienst sammelt auch ohne offenen Browser weiter. Belastbare historische Intervalle ergänzen den Verlauf nach Tagesabschluss. Ein täglicher Handimport ist für die Anzeige der bereits erfassten Werte nicht erforderlich.
 
 ## UX-08 · Solarleistung und Einheiten unter „Jetzt“
 
-**Status:** Offen. [Abnahmekriterien](today-acceptance.md#jetzt).
+**Status:** Erledigt. Die Anzeige der Schwelle, der Richtung, des SOC und der Quellhinweis wurden im Browser geprüft. [Nachweis](implementation-status.md#live-02-und-ux-08--laufender-tagesverlauf-und-leistungseinheiten).
 
 **Abnahme.** Die Kachel heißt „Solarleistung“. Die Quelle „PV-DC-Leistung am Wechselrichter“ und der Hinweis „AC-PV-Fluss nicht separat gemessen“ sind über das Info-Symbol erreichbar. Die Kacheln zeigen Leistung unter 10.000 W in Watt und ab 10.000 W in Kilowatt. Die Schwelle bezieht sich bei gerichteten Kanälen auf den Betrag. Ladezustand bleibt in Prozent.
 
@@ -125,3 +125,9 @@ Für den ersten Live-Abgleich die Last `13119`, Netzrichtungen `13149` und `1312
 Die bestehende Live-Diagnose liest nur die aktive Zuordnung. Die historische Probe fragt eine feste Kandidatenliste ab und zeigt für Minutenwerte vor allem Anzahlen. Eine getrennte Betreiberdiagnose soll serverseitig festgelegte Kandidaten für eine autorisierte Anlage und deren Geräte abfragen können. Sie zeigt pro Kanal angefragte und gelieferte Messpunkte, Einheit, Messzeit, Abrufzeit, Anzahl gültiger Werte und den Grund bei fehlenden Daten, soweit der Provider diesen liefert. Bei fehlendem Anbietergrund die Ursache als ungeklärt ausweisen. Eine bestätigte Null als gültigen Wert behandeln.
 
 **Abnahme.** PV- und SOC-Kandidaten sind lesend prüfbar, bevor sie aktiv zugeordnet werden. Die Diagnose ändert weder Profil noch Historie oder regulären Live-Cache. Ein Test deckt fehlenden Punkt, gültige Null, unbekannte Einheit und fehlende Freigabe ab. Der Probeablauf respektiert dieselben Anbietergrenzen wie der reguläre Abruf.
+
+## POT-01 · Speicher- und Überschussanalysen verständlich anzeigen
+
+**Status:** Erledigt. Potenzialansicht lokal geprüft, kombinierte Simulation und Exporte mit Demodaten geprüft. [Nachweis](implementation-status.md#data-01-live-02-ux-04-ux-05-und-pot-01--befunde-vom-11-november).
+
+**Abnahme.** Die Seite erklärt Kapazität, Verschiebung und Zusatzbedarf anhand ihrer Eingaben und Ergebnisse. Einspeisung ist nach Tag, Stunde, Monat und Jahreszeit auswertbar. Für ein Ladefenster sind nutzbare kWh und erfasste Stunden sichtbar. Fehlende Voraussetzungen für die private Simulation sind benannt.

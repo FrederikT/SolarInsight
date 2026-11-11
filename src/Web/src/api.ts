@@ -41,6 +41,8 @@ export type Metrics = Record<'pv' | 'load' | 'import' | 'export' | 'charge' | 'd
 export type Cost = { net: number | null; coveredNet: number; import: number; export: number; fixed: number;
   importCoverage: number; exportCoverage: number; complete: boolean }
 export type Report = { period: Period; timeZone: string; revision: string; resolutionMinutes: number; metrics: Metrics;
+  counterGaps?: { channel: 'pv' | 'load' | 'import' | 'export' | 'charge' | 'discharge'; start: string; end: string; kwh: number }[];
+  historicalSoc?: { at: string; value: number }[];
   cost: Cost; incomplete: boolean; warnings: string[]; providerMetrics: Metrics | null; providerExportDifference: number | null }
 export type Point = { day?: string; start?: string; local?: string; pv: number | null; load: number | null;
   import: number | null; export: number | null; charge: number | null; discharge: number | null; soc: number | null; cost?: number | null }

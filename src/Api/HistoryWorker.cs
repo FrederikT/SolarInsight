@@ -10,7 +10,7 @@ public interface IHistorySource : IReadProvider, IAggregateProvider
     int RefreshMinutes { get; }
 }
 
-public sealed class HistoryWorker(IHistorySource provider, IConfiguration configuration)
+public sealed class HistoryWorker(IHistorySource provider, IConfiguration configuration, TimeProvider? clock = null)
 {
     readonly int retryHours = Math.Clamp(configuration.GetValue("Sungrow:HistoryRetryHours", 24), 24, 48);
     const int MaxAttempts = 3;
@@ -21,7 +21,7 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
             j.End - j.Start > ProviderEndpoints.MaxTestWindow).OrderBy(j => j.Start).FirstOrDefaultAsync(ct);
         if (initial is null) return;
         var zone = TimeZoneInfo.FindSystemTimeZoneById(plant.Zone);
-        var now = DateTimeOffset.UtcNow;
+        var now = (clock ?? TimeProvider.System).GetUtcNow();
         var today = Calendar.Day(now, zone);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var locked = await db.Database.SqlQuery<int>(
@@ -46,7 +46,9 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
                 await QueueDay(db, plant.Id, scan.NextDay, zone, mapping, now, ct);
             scan.Due = now.AddMinutes(scan.NextDay < today ? 1 : provider.RefreshMinutes);
         }
-        var gap = await db.HistoryGaps.Where(g => g.PlantId == plant.Id && g.Due <= now)
+        bool counterWorked = provider is IDeviceCounterSource counters &&
+            await AutomaticCounterHistory.Tick(db, plant, scan, mapping, counters, provider, zone, now, ct);
+        var gap = counterWorked ? null : await db.HistoryGaps.Where(g => g.PlantId == plant.Id && g.Due <= now)
             .OrderBy(g => g.Open).ThenByDescending(g => g.Start).FirstOrDefaultAsync(ct);
         if (gap is not null)
         {

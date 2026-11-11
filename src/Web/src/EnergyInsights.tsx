@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useData } from './api'
-import { bounds, Chart, chartOptions, colors, date, localDay, number, Panel, pct, stamp, Status } from './components'
+import { bounds, Chart, chartOptions, colors, date, localDay, number, Panel, pct, power, stamp, Status } from './components'
 
 type Ring = { total: number; direct: number; battery: number; grid: number }
 type Frequency = { count: number; eligible: number }
@@ -56,8 +56,11 @@ function DayPlots({ data }: { data: Insights }) {
       if (v !== null) values.push([Date.parse(p.end) - 1, key === 'soc' ? v * 100 : v])
       if (data.points[i + 1]?.start !== p.end) values.push([Date.parse(p.end), null])
     })
-    return { name, type: 'line', step: 'end', showSymbol: false, connectNulls: false, data: values }
+    return { name, type: 'line', step: 'end', showSymbol: false, connectNulls: false, data: values,
+      tooltip: { valueFormatter: (value: unknown) => typeof value !== 'number' ? '—' :
+        key === 'soc' ? number(value, 1) + ' %' : power(value) } }
   }
+  const powerAxis = { type: 'value', name: 'Leistung', axisLabel: { formatter: power } }
   const marks = data.points.filter(p => p.limit === 'lower' || p.limit === 'upper').map(p => [
     { xAxis: Date.parse(p.start), itemStyle: { color: p.limit === 'lower' ? 'rgba(168,50,78,.19)' : 'rgba(0,130,105,.19)' } },
     { xAxis: Date.parse(p.end) },
@@ -68,20 +71,20 @@ function DayPlots({ data }: { data: Insights }) {
   return <>
     <Panel title="Haushaltslast nach Quelle">
       {data.points.some(p => p.directKw !== null) ? <Chart label="Gestapelte Haushaltslast aus PV, Speicher und Netz" option={{
-        ...base, yAxis: { type: 'value', name: 'kW' }, series: [series('directKw', 'Direkt aus PV'), series('batteryKw', 'Aus dem Speicher'),
+        ...base, yAxis: powerAxis, series: [series('directKw', 'Direkt aus PV'), series('batteryKw', 'Aus dem Speicher'),
           series('gridKw', 'Aus dem Netz')].map(s => ({ ...s, stack: 'load', areaStyle: { opacity: .75 } })),
       }} /> : <p>Keine belastbare Zuordnung der Haushaltslast.</p>}
     </Panel>
     <Panel title="Speicherzustand und Netzleistung am Tag">
       {!!missing.length && <p>Keine Minutenmesswerte für {missing.join(', ')}. Tagesenergie in kWh liefert keinen Leistungsverlauf in kW.</p>}
       {available.length > 0 && <Chart label="Gemeldeter SOC und Netzleistung auf lokaler Uhrzeitachse" option={{
-        ...base, yAxis: [{ type: 'value', name: 'kW' }, { type: 'value', name: 'Gemeldeter SOC (%)', min: 0, max: 100 }],
+        ...base, yAxis: [powerAxis, { type: 'value', name: 'Gemeldeter SOC (%)', min: 0, max: 100 }],
         series: available.map(([key, name]) => key === 'soc' ?
           { ...series(key, name), yAxisIndex: 1, markArea: { silent: true, data: marks } } : series(key, name)),
       }} />}
       {!!marks.length && <p>Rote Abschnitte markieren die untere, grüne die obere nutzbare Ladegrenze.</p>}
       {data.points.some(p => p.mix !== null) && <details><summary>Netzbezugsintervalle am Tag</summary><ul>
-        {data.points.filter(p => p.mix !== null).map(p => <li key={p.start}>{stamp(p.start, data.zone)} · {mixLabels[p.mix!]} · {number(p.gridKw)} kW</li>)}
+        {data.points.filter(p => p.mix !== null).map(p => <li key={p.start}>{stamp(p.start, data.zone)} · {mixLabels[p.mix!]} · {p.gridKw == null ? '—' : power(p.gridKw)}</li>)}
       </ul></details>}
     </Panel>
   </>

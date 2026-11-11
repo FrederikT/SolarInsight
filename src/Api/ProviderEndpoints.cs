@@ -21,7 +21,7 @@ public static class ProviderEndpoints
         new(13003, "DC-Gesamtleistung", "power"),
         new(13011, "Wechselrichter-Wirkleistung (Messort prüfen)", "power")
     ];
-    static readonly ProbePoint[] HistoryPoints = [.. HybridPoints, .. DeviceCounterHistory.Points];
+    internal static readonly ProbePoint[] HistoryPoints = [.. HybridPoints, .. DeviceCounterHistory.Points];
 
     public static void Map(RouteGroupBuilder api)
     {

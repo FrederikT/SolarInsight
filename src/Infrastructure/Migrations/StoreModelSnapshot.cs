@@ -137,6 +137,24 @@ namespace Infrastructure.Migrations
                     b.Property<Guid>("PlantId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("CounterAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CounterData")
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly?>("CounterDay")
+                        .HasColumnType("date");
+
+                    b.Property<DateTimeOffset?>("CounterDue")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CounterProfile")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("CounterUntil")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset>("Due")
                         .HasColumnType("timestamp with time zone");
 

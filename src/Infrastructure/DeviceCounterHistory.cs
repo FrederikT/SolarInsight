@@ -5,6 +5,11 @@ namespace SolarInsight.Infrastructure;
 public static class DeviceCounterHistory
 {
     public const string Source = "sungrow-device-counters-v1";
+    public const string GapOrigin = "counter-gap";
+    public const string SocSource = "sungrow-device-history-soc-v1";
+    static readonly (int Counter, int Power, string Key)[] Channels =
+        [(13134, 13003, "pv"), (13130, 13119, "load"), (13148, 13149, "import"),
+         (13125, 13121, "export"), (13034, 13126, "charge"), (13035, 13150, "discharge")];
     public static readonly ProbePoint[] Points =
     [
         new(13134, "PV-Ertrag gesamt", "energy"), new(13130, "Hausverbrauch gesamt", "energy"),
@@ -12,7 +17,11 @@ public static class DeviceCounterHistory
         new(13034, "Batterieladung gesamt", "energy"), new(13035, "Batterieentladung gesamt", "energy")
     ];
 
-    public static Interval[] Intervals(PointProbeResult report, DateTimeOffset start, DateTimeOffset end, TimeSpan step)
+    public static Interval[] Intervals(PointProbeResult report, DateTimeOffset start, DateTimeOffset end, TimeSpan step) =>
+        Analyze(report, start, end, step).Intervals;
+
+    public static (Interval[] Intervals, CounterSpan[] Gaps) Analyze(PointProbeResult report,
+        DateTimeOffset start, DateTimeOffset end, TimeSpan step)
     {
         var series = report.Points.Where(p => p.Unit is "Wh" or "kWh").ToDictionary(p => p.Point, p =>
             p.Values.Where(v => v.MeasuredAt.HasValue && v.Value >= 0)
@@ -23,31 +32,37 @@ public static class DeviceCounterHistory
         var telemetry = report.Points.Where(p => p.Unit is "W" or "kW").ToDictionary(p => p.Point,
             p => p.Values.Where(v => v.MeasuredAt.HasValue && v.Value >= 0)
                 .Select(v => v.MeasuredAt!.Value).ToHashSet());
-        var result = new List<Interval>();
-        for (var at = start; at + step <= end; at += step)
+        var spans = new List<CounterSpan>();
+        foreach (var (counter, power, key) in Channels)
         {
-            var next = at + step;
-            decimal? Delta(int point, int power)
+            if (!series.TryGetValue(counter, out var readings) || !telemetry.TryGetValue(power, out var observed)) continue;
+            DateTimeOffset? previous = null;
+            foreach (var at in observed.Where(at => at >= start && at <= end &&
+                (at - start).Ticks % step.Ticks == 0 && readings.ContainsKey(at)).Order())
             {
-                if (!telemetry.TryGetValue(power, out var observed) || !observed.Contains(at) || !observed.Contains(next) ||
-                    !series.TryGetValue(point, out var counter) ||
-                    !counter.TryGetValue(at, out var first) || !counter.TryGetValue(next, out var last) || last < first)
-                    return null;
-                var delta = last - first;
-                // Conservative ceiling for a validated residential profile, including counter rounding.
-                return delta <= 25 * (decimal)step.TotalHours + .1m ? delta : null;
+                if (previous is { } from)
+                {
+                    var delta = readings[at] - readings[from];
+                    // A reset reported inside an outage invalidates the entire span.
+                    var values = readings.Where(pair => pair.Key >= from && pair.Key <= at)
+                        .OrderBy(pair => pair.Key).Select(pair => pair.Value).ToArray();
+                    bool reset = values.Zip(values.Skip(1)).Any(pair => pair.First > pair.Second);
+                    if (!reset && delta >= 0 && delta <= 25 * (decimal)(at - from).TotalHours + .1m)
+                        spans.Add(new(key, from, at, delta));
+                }
+                previous = at;
             }
-            var pv = Delta(13134, 13003);
-            var load = Delta(13130, 13119);
-            var import = Delta(13148, 13149);
-            var export = Delta(13125, 13121);
-            var charge = Delta(13034, 13126);
-            var discharge = Delta(13035, 13150);
-            if (new[] { pv, load, import, export, charge, discharge }.Any(value => value.HasValue))
-                result.Add(new(at, next, pv, load, import, export, charge, discharge, null, null, "counter-delta", Source));
         }
-        return result.ToArray();
+        var intervals = spans.Where(span => span.End - span.Start == step).GroupBy(span => span.Start).Select(group =>
+        {
+            decimal? Value(string key) => group.FirstOrDefault(span => span.Channel == key)?.Kwh;
+            return new Interval(group.Key, group.Key + step, Value("pv"), Value("load"), Value("import"),
+                Value("export"), Value("charge"), Value("discharge"), null, null, "counter-delta", Source);
+        }).OrderBy(row => row.Start).ToArray();
+        return (intervals, spans.Where(span => span.End - span.Start > step).ToArray());
     }
+
+    public sealed record CounterSpan(string Channel, DateTimeOffset Start, DateTimeOffset End, decimal Kwh);
 
     public static Interval[] Merge(Reading[] existing, Interval[] incoming)
     {
