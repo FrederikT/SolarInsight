@@ -68,6 +68,16 @@ public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[]
 
     public decimal Hours => (decimal)(Calendar.Utc(Period.End, Zone) - Calendar.Utc(Period.Start, Zone)).Ticks /
         TimeSpan.TicksPerHour;
+    /// <summary>Hours of the period that have already passed; equals <see cref="Hours"/> for past periods.</summary>
+    public decimal ElapsedHours
+    {
+        get
+        {
+            var start = Calendar.Utc(Period.Start, Zone);
+            var now = DateTimeOffset.UtcNow;
+            return now <= start ? 0 : Math.Min(Hours, (decimal)(now - start).Ticks / TimeSpan.TicksPerHour);
+        }
+    }
     public Report Report() => CreateReport(Period, Rows);
     public Report CreateReport(Period period, Interval[] rows)
     {
@@ -84,7 +94,11 @@ public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[]
                 return new Interval(g.Key.Start, g.Key.End, Value("pv"), Value("load"), Value("import"), Value("export"),
                     Value("charge"), Value("discharge"));
             }).ToArray();
-        var provider = providerRows.Length == 0 ? null : Analysis.Summarize(providerRows, hours);
+        // Provider daily values only exist for finished days, so their basis ends at the start of today.
+        var todayStart = Calendar.Utc(Calendar.Day(DateTimeOffset.UtcNow, Zone), Zone);
+        var providerEnd = end < todayStart ? end : todayStart > start ? todayStart : start;
+        decimal providerHours = (decimal)(providerEnd - start).Ticks / TimeSpan.TicksPerHour;
+        var provider = providerRows.Length == 0 ? null : Analysis.Summarize(providerRows, providerHours > 0 ? providerHours : hours);
         decimal? exportDifference = provider?.Export.Coverage >= .999999m && metrics.Export.Coverage >= .999999m
             ? provider.Export.Kwh - metrics.Export.Kwh : null;
         var cost = Tariffs.Evaluate(rows.Length > 0 ? rows : providerRows, period, Zone);

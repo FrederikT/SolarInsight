@@ -14,7 +14,7 @@ type HourDay = { day: string; usableSoc: number | null; import: boolean | null; 
   emptyImport: boolean | null; fullExport: boolean | null; expectedHours: number }
 type Point = { start: string; end: string; directKw: number | null; batteryKw: number | null; gridKw: number | null;
   importKw: number | null; exportKw: number | null; soc: number | null; limit: string | null; mix: number | null }
-type Insights = { period: { start: string; end: string; days: number }; zone: string; hours: number; start: string; end: string; knownPaths: boolean;
+type Insights = { period: { start: string; end: string; days: number }; zone: string; hours: number; elapsedHours?: number; start: string; end: string; knownPaths: boolean;
   latest: string | null; points: Point[]; breakdown: { household: Ring | null; production: Ring | null; validHours: number;
     missingHours: number; rejectedHours: number; rejectedDifferenceKwh: number };
   storage: { lower: Limit; upper: Limit; hours: Hour[]; days: HourDay[] }; balance: Balance; socIntervals: number;
@@ -151,6 +151,7 @@ export function EnergyInsights({ query, version, drill, dailyCoverage }: {
   const data = summary.data
   const { breakdown, storage } = data
   const multi = data.period.days > 1
+  const elapsed = data.elapsedHours ?? data.hours
   const night = [22, 23, 0, 1, 2, 3, 4, 5].map(h => storage.hours[h])
   const chooseHour = (label: string) => setHour(Number(label.slice(0, 2)))
   const first = pure ? 'empty' : 'emptyImport'
@@ -163,13 +164,13 @@ export function EnergyInsights({ query, version, drill, dailyCoverage }: {
       <dl className="facts">
         <div><dt>Gemeinsame Tagesabdeckung</dt><dd>{dailyCoverage == null ? 'Keine Sungrow-Tagesaggregate' : pct(dailyCoverage)}</dd></div>
         <div><dt>Ende des letzten Minutenintervalls mit Messwert</dt><dd>{data.latest ? stamp(data.latest, data.zone) : 'Keine Minutenmesswerte'}</dd></div>
-        <div><dt>Gemeinsam bilanzierbar</dt><dd>{number(breakdown.validHours)} von {number(data.hours)} Stunden ({pct(breakdown.validHours / data.hours)})</dd></div>
+        <div><dt>Gemeinsam bilanzierbar</dt><dd>{number(breakdown.validHours)} von {number(elapsed)} bisher vergangenen Stunden ({pct(elapsed > 0 ? breakdown.validHours / elapsed : null)})</dd></div>
       </dl>
       <p>Die Aufteilungen werden aus der gemessenen Bilanz berechnet (Verbrauch + Ladung + Einspeisung = PV + Bezug + Entladung).
         {!data.knownPaths && ' Interne AC-Messpfade sind für diese Anlage nicht separat bestätigt; PV-Basis ist der Sungrow-PV-Ertrag.'}</p>
       {breakdown.missingHours > 0 && <p>{number(breakdown.missingHours)} erfasste Stunden ohne vollständige Bilanzgrundlage.</p>}
       {breakdown.rejectedHours > 0 && <p>{number(breakdown.rejectedHours)} Stunden wegen unplausibler Energiebilanz ausgeschlossen · {number(breakdown.rejectedDifferenceKwh)} kWh absolute Abweichung.</p>}
-      {breakdown.validHours + breakdown.missingHours + breakdown.rejectedHours < data.hours && <p>Für weitere Stunden fehlen Minutenintervalle.
+      {breakdown.validHours + breakdown.missingHours + breakdown.rejectedHours < elapsed - .01 && <p>Für weitere Stunden fehlen Minutenintervalle.
         Die Kreisdiagramme nutzen dort die Sungrow-Tageswerte; Auswertungen nach Uhrzeit brauchen Intervalle.</p>}
     </Panel>
     <div className="energy-rings">

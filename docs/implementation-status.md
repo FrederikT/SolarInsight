@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10 und POT-02 sind umgesetzt, die Prüfung mit privaten Daten steht aus. DATA-05 ist teilweise erledigt, siehe [Datenverfügbarkeit](data-availability.md). |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist offen, siehe [Datenverfügbarkeit](data-availability.md). |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
@@ -387,6 +387,23 @@ Am 13. November 2026 wurde das Projekt von Codex übernommen. Die nicht committe
   - Danach korrigiert: Singular „1 Tag“ in den Grundlagentexten der Kreisdiagramme.
 
 **Bereitstellung.** Demo (Port 8080) per Docker Compose neu gebaut. Docker Desktop war gestoppt und wurde dafür gestartet. Die private Instanz (Port 8081) läuft im neuen Release-Verzeichnis `app-claude-analytics`. `start.ps1` zeigt darauf, die vorherige Fassung liegt als `start.ps1.before-claude-analytics` daneben. Das portable PostgreSQL der privaten Instanz war gestoppt. Es wurde über den bestehenden `pg_ctl`-Weg gestartet und führte eine automatische Wiederherstellung nach unsauberem Herunterfahren durch. Beide Instanzen melden `ready` auf `/health/ready`. Datenbanken, Konfiguration und Zugangsdaten blieben unverändert, auf die private Datenbank wurde nicht geschrieben.
+
+### DATA-05 und DATA-06 · Fehlerprüfung und Herkunft historischer Batteriewerte
+
+Am 14. November 2026 folgte eine Prüfung der neuen Auswertungen und der Datenquellen.
+
+**Fehler behoben.**
+- Die Basis der Sungrow-Tageswerte zählte den laufenden Tag als fehlend. Tageswerte gibt es nur für abgeschlossene Tage. Im laufenden November stand deshalb „Basis 93,8 %“, obwohl kein Tag fehlte. Die Basis endet jetzt am Beginn des heutigen Tages (`DataView.CreateReport`).
+- „Gemeinsam bilanzierbar“ setzte die bilanzierbaren Stunden ins Verhältnis zu allen Stunden des Zeitraums, auch den künftigen. Bezug ist jetzt die bisher vergangene Zeit (`elapsedHours` in `/energy-insights`).
+
+**Lesende Proben über die private Instanz.** Es wurde nichts gespeichert.
+- Die Tagesroute (`/provider/probe`) lieferte für den 10.09.2023 und den 15.07.2024 PV, Last, Bezug und Einspeisung. Für die Batteriepunkte 83322 und 83323 kam kein Wert. Ein erneuter API-Tagesimport ergänzt deshalb keine Batteriewerte.
+- Die Gerätehistorie (`/provider/probe/device-minutes`, Gerät `5205263_14_1_1`) lieferte für den 01.06.2023 und den 15.07.2024 alle Gesamtzähler, auch Batterieladung (13034) und -entladung (13035), dazu Momentanleistungen und SOC als Anteil 0–1. Der SOC-Punkt 13141 hat keine Einheit und erscheint in der Diagnose deshalb als `unknown-unit`. Die Werte (0,789 bzw. 1) sind plausibel.
+- Der bestehende Gerätezähler-Nachimport schreibt historische Tage nicht, weil er Sungrow-Tageswerte für alle sechs Kanäle voraussetzt. Ein eigener Tageszähler-Auftrag ist als DATA-06 beschrieben.
+- Die Anlagen-Monats- und -Jahresberichte (CSV) haben keine Batteriespalten. Der Gesamtbericht enthält Jahressummen, deren Bilanz exakt schließt.
+- In der Datenbank stimmt die Netto-Batterieenergie aus der Bilanz (PV + Bezug − Last − Einspeisung) an allen Tagen mit Batteriewerten mit der gemessenen Differenz Ladung − Entladung überein. Für historische Tage ist sie damit bekannt, die Bruttowerte fehlen.
+
+**Prüfungen.** 35 Unit-Tests, 41 Integrationstests, TypeScript, ESLint und Vite-Build ohne Fehler.
 
 ### Lokale Bereitstellung
 

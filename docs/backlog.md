@@ -180,6 +180,19 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 
 ## DATA-05 · Datenqualität sichtbar machen und Batterie-Tageswerte nachladen
 
-**Status:** Teilweise erledigt. Übersicht und Dokumentation sind umgesetzt. Offen ist der API-Testimport eines Monats vor August 2026. Er klärt, ob iSolarCloud Batterie-Tageswerte rückwirkend liefert. Das erfordert eine Freigabe des Betreibers und eine Sicherung vorab. [Übersicht](data-availability.md).
+**Status:** Erledigt. Übersicht und Dokumentation sind umgesetzt. Lesende Proben vom 14. November 2026 belegen: Die Tagesroute liefert die Batteriepunkte 83322 und 83323 für 2023 und 2024 nicht, die Gerätehistorie liefert dagegen Batteriezähler und SOC ab Juni 2023. Der Nachimport folgt unter DATA-06. [Übersicht](data-availability.md).
 
-**Abnahme.** Der Datenstatus zeigt je Monat und Messgröße vorhandene Tageswerte, vollständige Intervalle und SOC-Stichproben sowie Lücken und Quellen. Für jede Lückenart ist der Nachimportweg mit seinem Risiko für bestehende Daten beschrieben. Nach einem Testimport ist dokumentiert, ob die Batterie-Tageswerte rückwirkend verfügbar sind.
+**Abnahme.** Der Datenstatus zeigt je Monat und Messgröße vorhandene Tageswerte, vollständige Intervalle und SOC-Stichproben sowie Lücken und Quellen. Für jede Lückenart ist der Nachimportweg mit seinem Risiko für bestehende Daten beschrieben. Es ist dokumentiert, ob die Batterie-Tageswerte rückwirkend verfügbar sind.
+
+## DATA-06 · Historische Batterie-Tageswerte aus Gerätezählern nachladen
+
+**Status:** Offen. Wartet auf die Entscheidung des Betreibers.
+
+**Hintergrund.** Vor August 2026 fehlen Batterieladung und -entladung als Tageswert. Energieflüsse zeigen dort „PV direkt oder Speicher (nicht trennbar)“. Die Gerätehistorie liefert die Gesamtzähler 13034 (Batterieladung) und 13035 (Batterieentladung) sowie PV, Last, Bezug, Einspeisung und SOC mindestens ab dem 01.06.2023. Der bestehende Gerätezähler-Nachimport schreibt historische Tage nicht, weil er vorhandene Sungrow-Tageswerte für alle sechs Kanäle voraussetzt.
+
+**Abnahme.**
+- Ein Hintergrundauftrag liest je Kalendertag den Zählerstand um 00:00 Uhr Ortszeit (ein Aufruf pro Tag, Aufrufabstand wie konfiguriert) und bildet daraus Tageswerte für Ladung und Entladung.
+- Ein Tag wird nur übernommen, wenn beide Mitternachtsstände vorliegen, die Zähler nicht rückläufig sind und die Zählerdifferenzen für PV, Last, Bezug und Einspeisung höchstens 0,2 kWh von den gespeicherten Tageswerten abweichen.
+- Der Auftrag ergänzt nur fehlende Werte (`fillOnly`) unter einer eigenen Quellenrevision. Er ist abbrechbar, setzt am Prüfpunkt fort und hat eine Vorschau ohne Schreiben.
+- Vor dem ersten Schreiblauf auf der privaten Datenbank gibt es eine Sicherung und die Freigabe des Betreibers.
+- Optional: 15-Minuten-Intervalle mit SOC für gewählte Zeiträume über dieselbe Quelle, mit ausgewiesenem Aufrufbedarf.
