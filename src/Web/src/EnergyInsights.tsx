@@ -32,10 +32,11 @@ const ringColors = ['#e3a33a', '#6d4dac', '#a8324e', '#8d9a92']
 
 /** Names the data basis of a ring so derived and missing days are never silent. */
 function basisText(b: Basis) {
-  const parts = [b.intervals && b.intervals + ' Tage aus 15-Minuten-Intervallen', b.daily && b.daily + ' Tage aus Sungrow-Tageswerten',
-    b.dailyUnsplit && b.dailyUnsplit + ' Tage ohne Batteriewerte (PV direkt und Speicher nicht trennbar)',
-    b.running && 'laufender Tag mit bisherigen Intervallen', b.missing && b.missing + ' Tage ohne Werte',
-    b.rejected && b.rejected + ' Tage mit nicht schließender Bilanz ausgeschlossen'].filter(Boolean)
+  const days = (n: number) => n + (n === 1 ? ' Tag' : ' Tage')
+  const parts = [b.intervals && days(b.intervals) + ' aus 15-Minuten-Intervallen', b.daily && days(b.daily) + ' aus Sungrow-Tageswerten',
+    b.dailyUnsplit && days(b.dailyUnsplit) + ' ohne Batteriewerte (PV direkt und Speicher nicht trennbar)',
+    b.running && 'laufender Tag mit bisherigen Intervallen', b.missing && days(b.missing) + ' ohne Werte',
+    b.rejected && days(b.rejected) + ' mit nicht schließender Bilanz ausgeschlossen'].filter(Boolean)
   return parts.join(' · ')
 }
 

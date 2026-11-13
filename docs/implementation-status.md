@@ -373,7 +373,18 @@ Am 13. November 2026 wurde das Projekt von Codex übernommen. Die nicht committe
 - TypeScript, ESLint und Vite-Build ohne Fehler. Vite meldet weiterhin den Größenhinweis für den ECharts-Chunk.
 - Playwright gegen die Demo auf Port 8080: 12 bestanden, 1 übersprungen (A22 braucht einen separaten privaten Testserver). Drei Tests wurden an geänderte Texte angepasst: Diagrammname, KPI-Erklärung und die aufklappbare Intervallsimulation. Ein Zwischenlauf direkt nach einem abgebrochenen Lauf hatte drei Fehlschläge (Zeitüberschreitungen). Der anschließende vollständige Lauf war grün.
 - Demo-API (synthetische Daten): Jahr, Quartal und „Seit Datenbeginn“ (730 Tage, 1,7 s) liefern Kreisdiagramme, Quoten und SOC. Die geschätzte Kapazität von 9,8 kWh liegt nahe den konfigurierten 9,6 kWh. Im Browser geprüft: Jahresauswahl ohne Stichtag, gestapelte Bilanz, Speicheransicht mit SOC-Achse, Kreisdiagramme und Potenzialseite.
-- **Ausstehend:** Die Browserprüfung der privaten Instanz mit echten Daten braucht eine Anmeldung durch den Betreiber. Die Rechenlogik wurde nur gegen die Datenbankabfragen abgeglichen (Tagesbilanz, SOC-Bereich 0–100 %, Batterietageswerte ab August 2026).
+- Private Instanz (Port 8081) mit echten Daten geprüft, nach Anmeldung durch den Betreiber (Browser und API, angemeldete Sitzung):
+  - November 2026: Autarkie 50,3 %, Eigenverbrauch 99 %, jeweils Basis 93,8 %. Die Kreisdiagramme stammen aus einem Intervalltag, 11 Sungrow-Tagen und dem laufenden Tag. Ladegrenzen, Netzbezugszeiten, nächtlicher Bezug und Beobachtungen sind gefüllt.
+  - Q3 2026: Autarkie 85,9 % (Basis 98,9 %). Ab August ist der Speicheranteil getrennt, davor als nicht trennbar ausgewiesen.
+  - Q4 2026: 58,6 % (Basis 98,2 %).
+  - Jahr 2025: 65,1 % (Basis 93,4 %). Mangels Batteriewerten ist das ganze Jahr nicht trennbar ausgewiesen.
+  - „Seit Datenbeginn“: 66,2 %, Antwortzeit 130 ms.
+  - Tagesansicht 10.11.2026: SOC an 96 von 96 Intervallen.
+  - Geschätzte Speicherkapazität 8,3–8,6 kWh, Ladegrenzen 0 % bzw. 86–100 %.
+  - Der niedrige mittlere SOC im November (13,6 %) entspricht den gespeicherten Gerätewerten: An vielen Tagen stand der Speicher bei 0 %, und auch die Momentanwerte vom 11. und 12.11. zeigen 0–5 %.
+  - Speicherpotenzial über 1.242 Tage: +5 kWh ersetzen rund 1.279 kWh Netzbezug (etwa 79 € pro Jahr bei Standardpreisen). Der vorhandene Speicher hob die Autarkie an 104 Tagen von etwa 39 % auf 72 %.
+  - `/data-quality` antwortet.
+  - Danach korrigiert: Singular „1 Tag“ in den Grundlagentexten der Kreisdiagramme.
 
 **Bereitstellung.** Demo (Port 8080) per Docker Compose neu gebaut. Docker Desktop war gestoppt und wurde dafür gestartet. Die private Instanz (Port 8081) läuft im neuen Release-Verzeichnis `app-claude-analytics`. `start.ps1` zeigt darauf, die vorherige Fassung liegt als `start.ps1.before-claude-analytics` daneben. Das portable PostgreSQL der privaten Instanz war gestoppt. Es wurde über den bestehenden `pg_ctl`-Weg gestartet und führte eine automatische Wiederherstellung nach unsauberem Herunterfahren durch. Beide Instanzen melden `ready` auf `/health/ready`. Datenbanken, Konfiguration und Zugangsdaten blieben unverändert, auf die private Datenbank wurde nicht geschrieben.
 
