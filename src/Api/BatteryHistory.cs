@@ -96,12 +96,13 @@ public sealed class BatteryHistory(IServiceScopeFactory scopes, IDeviceCounterSo
             {
                 if (snapshots.TryGetValue(day, out var known)) return known;
                 var midnight = Calendar.Utc(day, zone);
+                // A one-hour window: very short windows sometimes come back empty for older days.
                 for (int attempt = 0; ; attempt++)
                 {
                     try
                     {
                         var report = await source.ReadDeviceHistory(plant, device, DeviceCounterHistory.Points,
-                            midnight, midnight.AddMinutes(15), 15, ct);
+                            midnight, midnight.AddHours(1), 15, ct);
                         failures = 0;
                         Update(s => s with { Calls = s.Calls + 1, RemainingCalls = Math.Max(0, s.RemainingCalls - 1) });
                         var snapshot = Read(report, day, midnight);

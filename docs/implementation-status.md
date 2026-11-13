@@ -415,7 +415,7 @@ Am 14. November 2026 folgte eine Prüfung der neuen Auswertungen und der Datenqu
   - die sechs Kanäle die Bilanz innerhalb der Tagestoleranz schließen,
   - jeder bereits gespeicherte Tageswert höchstens 0,2 kWh abweicht.
 - `BatteryHistory` (Api) führt den Lauf im Hintergrund aus:
-  - ein Abruf der Gerätehistorie je Mitternacht, 15-Minuten-Fenster, über den bestehenden Aufrufabstand;
+  - ein Abruf der Gerätehistorie je Mitternacht (Fenster 00:00 bis 01:00 Uhr, 15-Minuten-Raster), über den bestehenden Aufrufabstand. Ein 15-Minuten-Fenster lieferte für Juni 2023 an den meisten Tagen keinen Wert, das Stundenfenster an denselben Tagen schon;
   - wartet bei Rate-Limits, wiederholt vorübergehende Fehler zweimal und zählt Abrufprobleme;
   - lässt sich abbrechen.
 - Vorschau: höchstens 31 Tage, schreibt nichts.
