@@ -86,7 +86,7 @@ public class ReferenceTests
     public void A08_MissingDataAndSegmentReset()
     {
         var rows = new[] { At(0, 6, 1), At(1, null, null), At(2, 0, 3) };
-        var m = Analysis.Summarize(rows, 3, true);
+        var m = Analysis.Summarize(rows, 3);
         Assert.Equal(4, m.Load.Kwh);
         Assert.Equal(2m / 3, m.Coverage);
         Assert.Null(m.Autarky);

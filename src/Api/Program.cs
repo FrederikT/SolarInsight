@@ -191,6 +191,7 @@ api.AddEndpointFilter(async (invocation, next) =>
     return await next(invocation);
 });
 Endpoints.Map(api);
+AnalyticsEndpoints.Map(api);
 ProviderEndpoints.Map(api);
 LiveEndpoints.Map(api);
 app.MapGet("/api/v1/lan/now", async (HttpContext ctx, Queries queries, Store db, LiveMonitor monitor, CancellationToken ct) =>

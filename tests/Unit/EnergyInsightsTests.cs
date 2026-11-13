@@ -19,15 +19,16 @@ public class EnergyInsightsTests
             Row(Origin.AddHours(1), 0, 10, discharge: 10),
             Row(Origin.AddHours(2), null, 5, 5),
             Row(Origin.AddHours(3), 20, 5, 5)];
-        var result = EnergyInsights.Analyze(rows, true, Battery, .02m, TimeZoneInfo.Utc, true);
+        var result = EnergyInsights.Analyze(rows, Battery, .02m, TimeZoneInfo.Utc, true);
         Assert.Equal(new FlowRing(100, 80, 10, 10), result.Breakdown.Production);
         Assert.Equal(new FlowRing(90, 80, 10, 0), result.Breakdown.Household);
         Assert.Equal(2, result.Breakdown.ValidHours);
         Assert.Equal(1, result.Breakdown.MissingHours);
         Assert.Equal(1, result.Breakdown.RejectedHours);
         Assert.Null(result.Points[3].DirectKw);
-        Assert.Null(EnergyInsights.Analyze(rows, false, null, 0, TimeZoneInfo.Utc, false).Breakdown.Household);
-        var zero = EnergyInsights.Analyze([Row(Origin, 0, 0)], true, null, 0, TimeZoneInfo.Utc, false);
+        // Unconfirmed AC paths no longer block a split that closes the metered balance.
+        Assert.Equal(new FlowRing(90, 80, 10, 0), EnergyInsights.Analyze(rows, null, 0, TimeZoneInfo.Utc, false).Breakdown.Household);
+        var zero = EnergyInsights.Analyze([Row(Origin, 0, 0)], null, 0, TimeZoneInfo.Utc, false);
         Assert.Equal(0, zero.Breakdown.Household!.Total);
         Assert.Equal(0, zero.Breakdown.Production!.Total);
     }
@@ -41,7 +42,7 @@ public class EnergyInsightsTests
             Row(Origin.AddHours(2), 0, 2, 1, discharge: 1),
             Row(Origin.AddHours(3), 1, 3, 1, discharge: 1),
             Row(Origin.AddHours(4), 0, 1, 1, discharge: null)
-        ], true, Battery, .02m, TimeZoneInfo.Utc, true);
+        ], Battery, .02m, TimeZoneInfo.Utc, true);
         Assert.Equal(Enum.GetValues<GridMix>(), result.Phases.Select(p => p.Mix));
         Assert.All(result.Phases, p => Assert.Equal(1, p.Kwh));
         Assert.Null(result.Points[4].Mix);

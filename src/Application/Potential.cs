@@ -31,7 +31,7 @@ public static class Potential
         if (rows.Length == 0) throw new ArgumentException("Keine gemeinsamen PV- und Verbrauchsdaten vorhanden.");
         decimal hours = (decimal)(Calendar.Utc(request.Period.End, zone) -
             Calendar.Utc(request.Period.Start, zone)).Ticks / TimeSpan.TicksPerHour;
-        var measured = Analysis.Summarize(data, hours, true);
+        var measured = Analysis.Summarize(data, hours);
         decimal coverage = measured.Coverage;
         double resolution = rows.Max(r => (r.End - r.Start).TotalMinutes);
         bool exploratory = coverage < .95m || resolution > 15;
