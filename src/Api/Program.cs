@@ -43,6 +43,8 @@ builder.Services.AddSingleton<LiveMonitor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LiveMonitor>());
 builder.Services.AddSingleton<IHistorySource>(sp => sp.GetRequiredService<LiveProvider>());
 builder.Services.AddSingleton<HistoryWorker>();
+builder.Services.AddSingleton<IDeviceCounterSource>(sp => sp.GetRequiredService<LiveProvider>());
+builder.Services.AddSingleton<BatteryHistory>();
 builder.Services.AddSingleton<LanAccess>();
 builder.Services.AddHostedService<ImportWorker>();
 builder.Services.AddSingleton<Jobs>();

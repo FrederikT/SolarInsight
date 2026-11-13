@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist offen, siehe [Datenverfügbarkeit](data-availability.md). |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist umgesetzt, der Schreiblauf wartet auf Freigabe, siehe [Datenverfügbarkeit](data-availability.md). |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
@@ -404,6 +404,39 @@ Am 14. November 2026 folgte eine Prüfung der neuen Auswertungen und der Datenqu
 - In der Datenbank stimmt die Netto-Batterieenergie aus der Bilanz (PV + Bezug − Last − Einspeisung) an allen Tagen mit Batteriewerten mit der gemessenen Differenz Ladung − Entladung überein. Für historische Tage ist sie damit bekannt, die Bruttowerte fehlen.
 
 **Prüfungen.** 35 Unit-Tests, 41 Integrationstests, TypeScript, ESLint und Vite-Build ohne Fehler.
+
+### DATA-06 · Batterie-Tageswerte aus Gerätezählern
+
+**Umsetzung.**
+- `BatteryCounterDays.Evaluate` (Application) bildet Tageswerte aus zwei Mitternachtsständen der Gesamtzähler 13134, 13130, 13148, 13125, 13034 und 13035.
+- Ein Tag gilt nur, wenn
+  - beide Stände vollständig vorliegen,
+  - kein Zähler rückläufig ist,
+  - die sechs Kanäle die Bilanz innerhalb der Tagestoleranz schließen,
+  - jeder bereits gespeicherte Tageswert höchstens 0,2 kWh abweicht.
+- `BatteryHistory` (Api) führt den Lauf im Hintergrund aus:
+  - ein Abruf der Gerätehistorie je Mitternacht, 15-Minuten-Fenster, über den bestehenden Aufrufabstand;
+  - wartet bei Rate-Limits, wiederholt vorübergehende Fehler zweimal und zählt Abrufprobleme;
+  - lässt sich abbrechen.
+- Vorschau: höchstens 31 Tage, schreibt nichts.
+- Übernahme:
+  - schreibt mit `fillOnly` nur fehlende Kanäle als Sungrow-Tageswert mit Revision `sungrow-device-counter-day-v1`;
+  - setzt keinen Prüfpunkt, weil bereits vollständige Tage übersprungen werden; ein erneuter Lauf setzt dadurch fort;
+  - startet nicht, solange ein regulärer Import läuft.
+- Endpunkte: `GET`, `POST` und `DELETE /api/v1/provider/battery-history`, im Demomodus gesperrt.
+- Oberfläche im Datenstatus mit Zeitraum, Abrufschätzung, Vorschau, Bestätigung, Fortschritt und Tagesliste.
+
+**Prüfungen.**
+- Neu: sechs Unit-Tests für die Tagesbewertung und ein Integrationstest (Vorschau ohne Schreiben, Übernahme nur fehlender Werte, unveränderte CSV-Werte, erneuter Lauf ohne Abrufe).
+- Insgesamt 41 Unit- und 42 Integrationstests bestanden. TypeScript und ESLint ohne Fehler.
+- Vorschau auf der privaten Instanz für den 20.08. bis 02.09.2024 (15 Abrufe, nichts gespeichert):
+  - 12 Tage übernehmbar; PV, Last, Bezug und Einspeisung stimmen dort mit den gespeicherten CSV-Tageswerten auf 0,0 kWh überein.
+  - Zusammen 103,5 kWh Ladung und 95,3 kWh Entladung.
+  - Für den 27.08. lieferte die Gerätehistorie um 00:00 Uhr keinen Zählerstand. Dieser Tag und der 26.08. bleiben deshalb offen; der 26.–28.08. ist auch in den CSV-Daten eine Lücke.
+  - Der 28.08. hatte keinen gespeicherten Tageswert und wäre mit allen sechs Kanälen ergänzt worden.
+  - Der erste Vorschaulauf ohne Wiederholungen verlor acht Tage durch einzelne fehlgeschlagene Abrufe. Seitdem werden solche Fehler wiederholt und als Hinweis gezählt.
+
+**Ausstehend.** Der Schreiblauf für Juni 2023 bis Juli 2026 (rund 1.150 offene Tage, etwa 5 Stunden bei 15 s Aufrufabstand) braucht die Freigabe des Betreibers und vorher eine Sicherung mit `pg_dump`. Mai 2023 vor dem 01.06. ist ungeprüft.
 
 ### Lokale Bereitstellung
 
