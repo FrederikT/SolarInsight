@@ -31,13 +31,30 @@ public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[]
     public Func<Interval, Battery?>? Limits => BatteryTimeline.Length == 0 ? null : BatteryFor;
     public DateOnly Today => Calendar.Day(DateTimeOffset.UtcNow, Zone);
 
-    /// <summary>Provider daily energies grouped by local day.</summary>
-    public DailyValues[] Daily() => Aggregates.GroupBy(a => Calendar.Day(a.Start, Zone)).Select(g =>
+    /// <summary>
+    /// Daily energies per local day: provider daily values first; for days without them, interval sums of each
+    /// channel that covers the whole day (interval-only plants and the synthetic demo).
+    /// </summary>
+    public DailyValues[] Daily()
     {
-        decimal? Value(string key) => g.FirstOrDefault(a => a.Point == key)?.Kwh;
-        return new DailyValues(g.Key, Value("pv"), Value("load"), Value("import"), Value("export"),
-            Value("charge"), Value("discharge"));
-    }).OrderBy(d => d.Day).ToArray();
+        var provider = Aggregates.GroupBy(a => Calendar.Day(a.Start, Zone)).ToDictionary(g => g.Key, g => g.ToArray());
+        var intervals = Rows.ToLookup(r => Calendar.Day(r.Start, Zone));
+        var days = provider.Keys.Concat(intervals.Select(g => g.Key)).Distinct().Order();
+        return days.Select(day =>
+        {
+            var aggregates = provider.GetValueOrDefault(day) ?? [];
+            var rows = intervals[day].ToArray();
+            decimal expected = (decimal)(Calendar.Utc(day.AddDays(1), Zone) - Calendar.Utc(day, Zone)).Ticks / TimeSpan.TicksPerHour;
+            decimal? Value(string key, Func<Interval, decimal?> select)
+            {
+                if (aggregates.FirstOrDefault(a => a.Point == key) is { } a) return a.Kwh;
+                var valid = rows.Where(r => select(r).HasValue).ToArray();
+                return valid.Length > 0 && Math.Abs(valid.Sum(r => r.Hours) - expected) < .0001m ? valid.Sum(r => select(r)!.Value) : null;
+            }
+            return new DailyValues(day, Value("pv", r => r.Pv), Value("load", r => r.Load), Value("import", r => r.Import),
+                Value("export", r => r.Export), Value("charge", r => r.Charge), Value("discharge", r => r.Discharge));
+        }).ToArray();
+    }
 
     public Battery? BatteryFor(Interval row)
     {

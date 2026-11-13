@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useData } from './api'
-import { bounds, Chart, chartOptions, colors, date, localDay, number, Panel, pct, power, stamp, Status } from './components'
+import { bounds, Chart, chartOptions, date, localDay, number, Panel, pct, power, stamp, Status } from './components'
 
-type Ring = { total: number; direct: number; battery: number; grid: number }
+type Ring = { total: number; direct: number; battery: number; grid: number; unsplit?: number }
+type Basis = { intervals: number; daily: number; dailyUnsplit: number; running: number; missing: number; rejected: number; missingDays: string[] }
+type Balance = { household: Ring | null; production: Ring | null; householdBasis: Basis; productionBasis: Basis;
+  gridCharge: number; batteryExport: number; days: number; pathsConfirmed: boolean }
 type Frequency = { count: number; eligible: number }
 type Limit = { hours: number; eligibleHours: number; kwh: number; gridEligibleHours: number; atLimitGridHours: number }
 type Hour = { hour: number; usableSoc: number | null; socDays: number; import: Frequency; empty: Frequency;
@@ -14,7 +17,8 @@ type Point = { start: string; end: string; directKw: number | null; batteryKw: n
 type Insights = { period: { start: string; end: string; days: number }; zone: string; hours: number; start: string; end: string; knownPaths: boolean;
   latest: string | null; points: Point[]; breakdown: { household: Ring | null; production: Ring | null; validHours: number;
     missingHours: number; rejectedHours: number; rejectedDifferenceKwh: number };
-  storage: { lower: Limit; upper: Limit; hours: Hour[]; days: HourDay[] };
+  storage: { lower: Limit; upper: Limit; hours: Hour[]; days: HourDay[] }; balance: Balance; socIntervals: number;
+  battery: { minSoc: number; maxSoc: number; capacity: number; estimated: boolean; capacityKwh: number | null } | null;
   totals: { mix: number; hours: number; kwh: number }[]; phases: { start: string; end: string; kwh: number }[]; phaseCount: number;
   nights: { evening: string; emptyHours: number | null; complete: boolean; firstPv: string | null }[] }
 const mixLabels = ['Nur Netz', 'Netz + PV', 'Netz + Speicher', 'Netz + PV + Speicher']
@@ -24,22 +28,61 @@ const frequency = (value: Frequency) => value.eligible ? value.count + ' von ' +
 const ratio = (value: Frequency) => value.eligible ? 100 * value.count / value.eligible : null
 const flag = (value: boolean | null) => value == null ? 'Unbekannt' : value ? 'Ja' : 'Nein'
 
-function EnergyRing({ title, ring, labels }: { title: string; ring: Ring | null; labels: string[] }) {
-  const data = ring ? [ring.direct, ring.battery, ring.grid] : []
+const ringColors = ['#e3a33a', '#6d4dac', '#a8324e', '#8d9a92']
+
+/** Names the data basis of a ring so derived and missing days are never silent. */
+function basisText(b: Basis) {
+  const parts = [b.intervals && b.intervals + ' Tage aus 15-Minuten-Intervallen', b.daily && b.daily + ' Tage aus Sungrow-Tageswerten',
+    b.dailyUnsplit && b.dailyUnsplit + ' Tage ohne Batteriewerte (PV direkt und Speicher nicht trennbar)',
+    b.running && 'laufender Tag mit bisherigen Intervallen', b.missing && b.missing + ' Tage ohne Werte',
+    b.rejected && b.rejected + ' Tage mit nicht schließender Bilanz ausgeschlossen'].filter(Boolean)
+  return parts.join(' · ')
+}
+
+function EnergyRing({ title, ring, labels, basis, children, colors = ringColors }: {
+  title: string; ring: Ring | null; labels: string[]; basis: Basis; children?: ReactNode; colors?: string[]
+}) {
+  const data = ring ? [ring.direct, ring.battery, ring.grid, ring.unsplit ?? 0] : []
+  const shown = data.map((value, i) => ({ value, name: labels[i], itemStyle: { color: colors[i] } })).filter(d => d.value > 0)
   return <Panel title={title}>
-    {!ring ? <p>Aufteilung mangels bestätigter, plausibler Energieflüsse nicht verfügbar.</p> : !ring.total ?
-      <p>0 kWh in den auswertbaren Intervallen.</p> : <>
+    {!ring ? <p>Für diesen Zeitraum fehlen die nötigen Energiewerte{basis.missing ? ' (' + basis.missing + ' Tage ohne Werte)' : ''}.
+      Benötigt werden mindestens Hausverbrauch und Netzbezug bzw. PV-Ertrag und Einspeisung desselben Tages.</p> : !ring.total ?
+      <p>0 kWh im erfassten Zeitraum.</p> : <>
         <Chart label={title} option={{ animation: false, tooltip: { trigger: 'item', renderMode: 'richText',
-          formatter: (p: { name: string; value: number }) => p.name + ' · ' + number(p.value) + ' kWh · ' + pct(p.value / ring.total) },
-          series: [{ type: 'pie', radius: ['58%', '83%'], label: { show: false },
-            data: data.map((value, i) => ({ value, name: labels[i] })) }],
-          graphic: [{ type: 'text', left: 'center', top: 'middle', style: {
-            text: number(ring.total) + ' kWh', fontSize: 21, fontWeight: 'bold', fill: '#1a3027' } }] }} />
-        <ul>{data.map((value, i) => <li key={labels[i]}><span aria-hidden="true" className="energy-swatch" style={{ background: colors[i] }} />{labels[i]} · {number(value)} kWh · {pct(value / ring.total)}</li>)}</ul>
-        {Math.abs(ring.total - data.reduce((sum, v) => sum + v, 0)) > .000001 &&
-          <p>Bilanzrest innerhalb der Messtoleranz · {number(ring.total - data.reduce((sum, v) => sum + v, 0), 4)} kWh</p>}
+          formatter: (p: { name: string; value: number }) => p.name + ' · ' + number(p.value, 1) + ' kWh · ' + pct(p.value / ring.total) },
+          series: [{ type: 'pie', radius: ['0%', '70%'], label: { formatter: (p: { percent: number }) => number(p.percent, 0) + ' %' },
+            data: shown }] }} />
+        <p><strong>{number(ring.total, 1)} kWh gesamt</strong></p>
+        <ul>{data.map((value, i) => (i < 3 || value > 0) && <li key={labels[i]}><span aria-hidden="true" className="energy-swatch" style={{ background: colors[i] }} />
+          {labels[i]} · {number(value, 1)} kWh · {pct(value / ring.total)}</li>)}</ul>
+        {Math.abs(ring.total - data.reduce((sum, v) => sum + v, 0)) > .05 &&
+          <p>Bilanzrest innerhalb der Messtoleranz · {number(ring.total - data.reduce((sum, v) => sum + v, 0), 2)} kWh</p>}
+        {children}
       </>}
+    <p><small>Grundlage: {basisText(basis) || 'keine Tage'}</small></p>
   </Panel>
+}
+
+/**
+ * The household ring shows the immediate source. Battery energy itself was charged earlier, mostly from PV;
+ * this estimates the original origin from the charge split over the same period (ignores the SOC difference
+ * between period start and end).
+ */
+function Origin({ balance }: { balance: Balance }) {
+  const house = balance.household, pvToBattery = balance.production?.battery ?? 0
+  if (!house || !house.total) return null
+  const charged = pvToBattery + balance.gridCharge
+  const pvShareOfBattery = charged > 0 ? pvToBattery / charged : null
+  const fromPv = house.direct + (house.unsplit ?? 0) + (pvShareOfBattery == null ? 0 : house.battery * pvShareOfBattery)
+  return <details><summary>Unmittelbare Quelle und ursprüngliche Herkunft</summary>
+    <p>Das Diagramm zeigt, woher der Strom im Moment des Verbrauchs kam. Der Speicher gibt Energie ab, die vorher geladen wurde.
+      {balance.gridCharge > .05 ? ' Im Zeitraum wurden mindestens ' + number(balance.gridCharge, 1) + ' kWh aus dem Netz in den Speicher geladen.'
+        : ' Eine Speicherladung aus dem Netz ist in den Messwerten nicht erkennbar.'}
+      {balance.householdBasis.daily > 0 && ' An Tagen mit reinen Tageswerten lässt sich gleichzeitiges Netzladen nicht erkennen.'}</p>
+    {pvShareOfBattery != null && <p>Näherung der ursprünglichen Herkunft: etwa {pct(fromPv / house.total)} aus PV und
+      {' '}{pct(1 - fromPv / house.total)} aus dem Netz. Die Näherung verteilt die Speicherentladung im Verhältnis der Ladung aus PV und Netz
+      und vernachlässigt den unterschiedlichen Speicherinhalt zu Beginn und Ende des Zeitraums.</p>}
+  </details>
 }
 
 function DayPlots({ data }: { data: Insights }) {
@@ -121,20 +164,30 @@ export function EnergyInsights({ query, version, drill, dailyCoverage }: {
         <div><dt>Ende des letzten Minutenintervalls mit Messwert</dt><dd>{data.latest ? stamp(data.latest, data.zone) : 'Keine Minutenmesswerte'}</dd></div>
         <div><dt>Gemeinsam bilanzierbar</dt><dd>{number(breakdown.validHours)} von {number(data.hours)} Stunden ({pct(breakdown.validHours / data.hours)})</dd></div>
       </dl>
-      {!data.knownPaths && <p>Die Energiepfade der Anlage sind nicht bestätigt.</p>}
+      <p>Die Aufteilungen werden aus der gemessenen Bilanz berechnet (Verbrauch + Ladung + Einspeisung = PV + Bezug + Entladung).
+        {!data.knownPaths && ' Interne AC-Messpfade sind für diese Anlage nicht separat bestätigt; PV-Basis ist der Sungrow-PV-Ertrag.'}</p>
       {breakdown.missingHours > 0 && <p>{number(breakdown.missingHours)} erfasste Stunden ohne vollständige Bilanzgrundlage.</p>}
       {breakdown.rejectedHours > 0 && <p>{number(breakdown.rejectedHours)} Stunden wegen unplausibler Energiebilanz ausgeschlossen · {number(breakdown.rejectedDifferenceKwh)} kWh absolute Abweichung.</p>}
-      {breakdown.validHours + breakdown.missingHours + breakdown.rejectedHours < data.hours && <p>Für weitere Stunden fehlen Minutenintervalle.</p>}
+      {breakdown.validHours + breakdown.missingHours + breakdown.rejectedHours < data.hours && <p>Für weitere Stunden fehlen Minutenintervalle.
+        Die Kreisdiagramme nutzen dort die Sungrow-Tageswerte; Auswertungen nach Uhrzeit brauchen Intervalle.</p>}
     </Panel>
     <div className="energy-rings">
-      <EnergyRing title="Woher kam mein Haushaltsstrom?" ring={breakdown.household} labels={['Direkt aus PV', 'Aus dem Speicher', 'Aus dem Netz']} />
-      <EnergyRing title="Wohin ging mein PV-Ertrag?" ring={breakdown.production} labels={['Direkt im Haushalt genutzt', 'In den Speicher geladen', 'Ins Netz eingespeist']} />
+      <EnergyRing title="Woher kam mein Haushaltsstrom?" ring={data.balance.household} basis={data.balance.householdBasis}
+        labels={['Direkt aus PV', 'Aus dem Speicher', 'Aus dem Netz', 'PV direkt oder Speicher (nicht trennbar)']}><Origin balance={data.balance} /></EnergyRing>
+      <EnergyRing title="Wohin ging mein PV-Ertrag?" ring={data.balance.production} basis={data.balance.productionBasis}
+        labels={['Direkt im Haushalt genutzt', 'In den Speicher geladen', 'Ins Netz eingespeist', 'Haushalt oder Speicher (nicht trennbar)']}
+        colors={['#e3a33a', '#8f78c4', '#008269', '#8d9a92']} />
     </div>
     <Panel title="Zeit an den nutzbaren Ladegrenzen">
+      {data.battery ? <p>Untere Grenze {pct(data.battery.minSoc)}, obere Grenze {pct(data.battery.maxSoc)}
+        {data.battery.estimated ? ' · aus dem beobachteten Ladezustand abgeleitet, weil keine Speicherparameter hinterlegt sind' : ' · aus den Einstellungen'}.
+        {data.battery.estimated && data.battery.capacityKwh != null && ' Geschätzte Kapazität ' + number(data.battery.capacityKwh, 1) + ' kWh.'}</p>
+        : <p>Keine Speichergrenzen bekannt. Hinterlege Speicherparameter in den Einstellungen oder importiere Ladezustandswerte.</p>}
+      {data.socIntervals === 0 && <p>Im Zeitraum liegen keine Intervalle mit Ladezustand vor. Historische Ladezustandswerte gibt es nur für Zeiträume mit Gerätezählerimport.</p>}
       <dl className="facts">{([['Untere Ladegrenze', 'Netzbezug', storage.lower], ['Obere Ladegrenze', 'Einspeisung', storage.upper]] as const)
         .map(([title, grid, limit]) => <div key={title}><dt>{title}</dt><dd>{limit.eligibleHours ?
           number(limit.hours) + ' h · ' + pct(limit.hours / limit.eligibleHours) : 'Nicht auswertbar'}</dd>
-          <small>{number(limit.eligibleHours)} h mit auswertbarem SOC und bestätigten Ladegrenzen</small>
+          <small>{number(limit.eligibleHours)} h mit auswertbarem Ladezustand</small>
           <dd>{grid} · {limit.atLimitGridHours || (limit.eligibleHours && !limit.hours) ? number(limit.kwh) + ' kWh' : 'nicht auswertbar'}</dd>
           <small>{number(limit.atLimitGridHours)} von {number(limit.hours)} h an der Ladegrenze mit gültigem Netzkanal</small></div>)}</dl>
     </Panel>
@@ -146,7 +199,8 @@ export function EnergyInsights({ query, version, drill, dailyCoverage }: {
           return <button className="secondary" aria-pressed={mix === i} key={name} disabled={!total}
             onClick={() => { setMix(i); setOffset(0) }}>{name} · {number(total?.hours ?? 0)} h · {number(total?.kwh ?? 0)} kWh</button>
         })}</div>
-        {breakdown.validHours === 0 && <p>Keine bestätigten Energieflüsse für die Einteilung verfügbar.</p>}
+        {breakdown.validHours === 0 && <p>Für diesen Zeitraum gibt es keine 15-Minuten-Intervalle mit allen sechs Energiekanälen.
+          Die Einteilung nach Uhrzeit ist deshalb nicht möglich. Unter Datenstatus steht, für welche Monate Intervalle vorliegen.</p>}
         {mix !== null && (phases?.data ? <>
           <ul>{phases.data.phases.map(p => <li key={p.start}><button className="link" onClick={() => drill(localDay(p.start, data.zone))}>
             {stamp(p.start, data.zone)} bis {stamp(p.end, data.zone)}</button> · {number(p.kwh)} kWh</li>)}</ul>

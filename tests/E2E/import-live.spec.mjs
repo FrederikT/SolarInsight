@@ -250,7 +250,8 @@ test('Sungrow daily totals stay separate from incomplete interval charts', async
         counterGaps: monthly ? [] : [{ channel: 'load', start: '2026-11-06T10:15:00Z', end: '2026-11-06T10:45:00Z', kwh: .3 }],
         historicalSoc: monthly ? [] : [{ at: '2026-11-06T10:00:00Z', value: 0 }, { at: '2026-11-06T10:45:00Z', value: .45 }],
         metrics: { ...metrics, coverage: 0, pv: unavailable, load: full(22.5), import: unavailable, export: unavailable, autarky: null, retention: null },
-        providerMetrics: { ...metrics, coverage: monthly ? .2 : 1, pv: full(16.6), load: full(22.5), import: full(6.5), export: full(0), autarky: null, retention: null } },
+        providerMetrics: { ...metrics, coverage: monthly ? .2 : 1, pv: full(16.6), load: full(22.5), import: full(6.5), export: full(0),
+          autarky: 1 - 6.5 / 22.5, retention: 1, autarkyCoverage: monthly ? .2 : 1, retentionCoverage: monthly ? .2 : 1 } },
       buckets: [{ start: '2026-11-06T10:00:00Z', local: '11:00', load: 1 }],
       providerBuckets: monthly ? [{ day: '2026-11-06', pv: 16.6, load: 22.5 }] : null,
     } })
@@ -286,7 +287,7 @@ test('Sungrow daily totals stay separate from incomplete interval charts', async
   const info = page.getByLabel('Details zu Autarkiegrad')
   await info.focus()
   await info.press('Enter')
-  await expect(kpis.getByText(/Näherung aus Tageswerten · setzt Betrieb ohne Netzladen voraus/)).toBeVisible()
+  await expect(kpis.getByText(/Autarkiegrad = \(Hausverbrauch − Netzbezug\) ÷ Hausverbrauch\. Quelle: Sungrow-Tageswerte/)).toBeVisible()
   await page.getByText('Hinweise zur Datengrundlage').click()
   await expect(page.getByText(/Gemeinsame Minutenabdeckung: 0 % der Zeit/)).toBeVisible()
   await expect(page.getByText(/Gemeinsame Tagesabdeckung: 100 % der Tage/)).toBeVisible()
@@ -304,7 +305,7 @@ test('Sungrow daily totals stay separate from incomplete interval charts', async
   await expect(page.getByRole('table').first()).not.toContainText('16,6')
   await page.getByLabel('Details zu Autarkiegrad').click()
   await expect(kpis.locator('article').filter({ hasText: 'Autarkiegrad' }))
-    .toContainText('Zu wenig gemeinsame Messdaten für den gewählten Zeitraum')
+    .toContainText('Basis 20 % des Zeitraums')
 })
 
 test('all main views fit on desktop and mobile', async ({ page }) => {

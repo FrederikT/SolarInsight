@@ -37,7 +37,8 @@ export type Plant = { name: string; zone: string; region: string; synthetic: boo
   capabilities: { energy: boolean; timeseries: boolean; events: boolean; simulation: boolean }; devices: { model: string; type: string }[] }
 export type Channel = { kwh: number | null; coverage: number }
 export type Metrics = Record<'pv' | 'load' | 'import' | 'export' | 'charge' | 'discharge', Channel> &
-  { autarky: number | null; retention: number | null; coverage: number; socMean: number | null; socMin: number | null; socMax: number | null }
+  { autarky: number | null; retention: number | null; coverage: number; socMean: number | null; socMin: number | null; socMax: number | null;
+    autarkyCoverage: number; retentionCoverage: number }
 export type Cost = { net: number | null; coveredNet: number; import: number; export: number; fixed: number;
   importCoverage: number; exportCoverage: number; complete: boolean }
 export type Report = { period: Period; timeZone: string; revision: string; resolutionMinutes: number; metrics: Metrics;
@@ -45,7 +46,8 @@ export type Report = { period: Period; timeZone: string; revision: string; resol
   historicalSoc?: { at: string; value: number }[];
   cost: Cost; incomplete: boolean; warnings: string[]; providerMetrics: Metrics | null; providerExportDifference: number | null }
 export type Point = { day?: string; start?: string; local?: string; pv: number | null; load: number | null;
-  import: number | null; export: number | null; charge: number | null; discharge: number | null; soc: number | null; cost?: number | null }
+  import: number | null; export: number | null; charge: number | null; discharge: number | null; soc: number | null; cost?: number | null;
+  socMin?: number | null; socMax?: number | null; autarky?: number | null; retention?: number | null; coverage?: number | null }
 export type EnergyEvent = { type: string; start: string; end: string; kwh: number; peakKw: number; text: string }
 export type Battery = { capacity: number; chargeKw: number; dischargeKw: number; chargeEfficiency: number;
   dischargeEfficiency: number; minSoc: number; maxSoc: number; usable?: number }
