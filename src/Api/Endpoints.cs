@@ -38,9 +38,10 @@ public static class Endpoints
                 return Results.BadRequest();
             var view = await Read(q, query, ct);
             var rule = JsonSerializer.Deserialize<EventRule>(view.Plant.Rules) ?? new();
-            var battery = view.ConfigurationBoundary ? null : view.Battery;
-            var flow = EnergyInsights.Analyze(view.Rows, view.KnownPaths, battery, rule.SocTolerance, view.Zone, view.Period.Days == 1);
-            var storage = StorageInsights.Profile(view.Rows, view.Period, view.Zone, battery, rule.SocTolerance, hour, view.BatteryFor);
+            var battery = view.EffectiveBattery;
+            var flow = EnergyInsights.Analyze(view.Rows, battery, rule.SocTolerance, view.Zone, view.Period.Days == 1);
+            var storage = StorageInsights.Profile(view.Rows, view.Period, view.Zone, battery, rule.SocTolerance, hour, view.Limits);
+            var balance = EnergyBalance.Evaluate(view.Rows, view.Daily(), view.Period, view.Zone, view.Today, view.KnownPaths);
             var phases = mix is { } category ? flow.Phases.Where(p => (int)p.Mix == category).ToArray() : [];
             NightDetail[] nights = [];
             if (hour is >= 22 or < 6)
@@ -48,14 +49,18 @@ public static class Endpoints
                 var byDay = view.Rows.ToLookup(r => Calendar.Day(r.Start, view.Zone));
                 nights = storage.Days.Where(d => d.Import == true).Select(d => hour < 6 ? d.Day.AddDays(-1) : d.Day)
                     .Distinct().Select(d => StorageInsights.Night(byDay[d].Concat(byDay[d.AddDays(1)]).ToArray(),
-                        d, view.Zone, battery, rule.SocTolerance, view.BatteryFor)).ToArray();
+                        d, view.Zone, battery, rule.SocTolerance, view.Limits)).ToArray();
             }
             return Results.Ok(new
             {
                 view.Period, zone = view.Zone.Id, view.Hours, view.KnownPaths,
                 latest = view.Rows.Length == 0 ? (DateTimeOffset?)null : view.Rows[^1].End,
                 start = Calendar.Utc(view.Period.Start, view.Zone), end = Calendar.Utc(view.Period.End, view.Zone),
-                flow.Breakdown, flow.Points, storage,
+                flow.Breakdown, flow.Points, storage, balance,
+                battery = battery is null ? null : new { battery.MinSoc, battery.MaxSoc, battery.Capacity,
+                    estimated = view.BatteryEstimated, view.Estimate?.CapacityKwh, view.Estimate?.SocSamples },
+                socIntervals = view.Rows.Count(r => r.Soc.HasValue),
+                firstInterval = view.Rows.Length == 0 ? (DateTimeOffset?)null : view.Rows[0].Start,
                 totals = flow.Phases.GroupBy(p => p.Mix).Select(g => new GridTotal(g.Key,
                     g.Sum(p => (decimal)(p.End - p.Start).Ticks / TimeSpan.TicksPerHour), g.Sum(p => p.Kwh))),
                 phases = phases.Skip(offset ?? 0).Take(40), phaseCount = phases.Length, nights
@@ -93,9 +98,11 @@ public static class Endpoints
             var rule = JsonSerializer.Deserialize<EventRule>(view.Plant.Rules) ?? new();
             if (threshold.HasValue) rule = rule with { Kw = threshold.Value };
             Validate(rule);
-            var events = Analysis.Events(view.Rows, view.ConfigurationBoundary ? null : view.Battery, rule)
+            var events = Analysis.Events(view.Rows, view.EffectiveBattery, rule)
                 .Where(e => type is null || e.Type == type).ToArray();
             return new { view.Period, timeZone = view.Zone.Id, view.Revision, total = events.Length,
+                batteryEstimated = view.BatteryEstimated, intervals = view.Rows.Length,
+                observations = Observations.FromDaily(view.Daily(), view.Today),
                 events = events.Skip(Math.Clamp(offset ?? 0, 0, 100000)).Take(Math.Clamp(limit ?? 30, 1, 100)).ToArray() };
         });
         api.MapGet("/surplus", async ([AsParameters] ViewPeriod query, decimal? kw, int? from, int? to, Queries q,

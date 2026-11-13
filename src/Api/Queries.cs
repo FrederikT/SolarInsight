@@ -21,6 +21,40 @@ public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[]
     public (DateTimeOffset Since, Battery? Battery)[] BatteryTimeline { get; init; } = [];
     public DeviceCounterHistory.CounterSpan[] CounterGaps { get; init; } = [];
     public SocSample[] HistoricalSoc { get; init; } = [];
+    /// <summary>Battery parameters estimated from SOC and battery energy when none are configured.</summary>
+    public BatteryEstimate? Estimate { get; init; }
+
+    /// <summary>Configured battery, or the estimate when the plant has no battery configuration at all.</summary>
+    public Battery? EffectiveBattery => ConfigurationBoundary ? null : Battery ??
+        (BatteryTimeline.Length == 0 ? Estimate?.Battery : null);
+    public bool BatteryEstimated => !ConfigurationBoundary && Battery is null && BatteryTimeline.Length == 0 && Estimate is not null;
+    public Func<Interval, Battery?>? Limits => BatteryTimeline.Length == 0 ? null : BatteryFor;
+    public DateOnly Today => Calendar.Day(DateTimeOffset.UtcNow, Zone);
+
+    /// <summary>
+    /// Daily energies per local day: provider daily values first; for days without them, interval sums of each
+    /// channel that covers the whole day (interval-only plants and the synthetic demo).
+    /// </summary>
+    public DailyValues[] Daily()
+    {
+        var provider = Aggregates.GroupBy(a => Calendar.Day(a.Start, Zone)).ToDictionary(g => g.Key, g => g.ToArray());
+        var intervals = Rows.ToLookup(r => Calendar.Day(r.Start, Zone));
+        var days = provider.Keys.Concat(intervals.Select(g => g.Key)).Distinct().Order();
+        return days.Select(day =>
+        {
+            var aggregates = provider.GetValueOrDefault(day) ?? [];
+            var rows = intervals[day].ToArray();
+            decimal expected = (decimal)(Calendar.Utc(day.AddDays(1), Zone) - Calendar.Utc(day, Zone)).Ticks / TimeSpan.TicksPerHour;
+            decimal? Value(string key, Func<Interval, decimal?> select)
+            {
+                if (aggregates.FirstOrDefault(a => a.Point == key) is { } a) return a.Kwh;
+                var valid = rows.Where(r => select(r).HasValue).ToArray();
+                return valid.Length > 0 && Math.Abs(valid.Sum(r => r.Hours) - expected) < .0001m ? valid.Sum(r => select(r)!.Value) : null;
+            }
+            return new DailyValues(day, Value("pv", r => r.Pv), Value("load", r => r.Load), Value("import", r => r.Import),
+                Value("export", r => r.Export), Value("charge", r => r.Charge), Value("discharge", r => r.Discharge));
+        }).ToArray();
+    }
 
     public Battery? BatteryFor(Interval row)
     {
@@ -37,11 +71,12 @@ public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[]
     public Report Report() => CreateReport(Period, Rows);
     public Report CreateReport(Period period, Interval[] rows)
     {
-        decimal hours = (decimal)(Calendar.Utc(period.End, Zone) - Calendar.Utc(period.Start, Zone)).Ticks /
-            TimeSpan.TicksPerHour;
-        var metrics = Analysis.Summarize(rows, hours, KnownPaths);
         var start = Calendar.Utc(period.Start, Zone);
         var end = Calendar.Utc(period.End, Zone);
+        // Coverage of a running period refers to the time that has already passed, not to future days.
+        var available = end < DateTimeOffset.UtcNow ? end : DateTimeOffset.UtcNow > start ? DateTimeOffset.UtcNow : end;
+        decimal hours = (decimal)(available - start).Ticks / TimeSpan.TicksPerHour;
+        var metrics = Analysis.Summarize(rows, hours);
         var providerRows = Aggregates.Where(a => a.Start >= start && a.End <= end).GroupBy(a => (a.Start, a.End))
             .Select(g =>
             {
@@ -49,7 +84,7 @@ public record DataView(Plant Plant, TimeZoneInfo Zone, Period Period, Interval[]
                 return new Interval(g.Key.Start, g.Key.End, Value("pv"), Value("load"), Value("import"), Value("export"),
                     Value("charge"), Value("discharge"));
             }).ToArray();
-        var provider = providerRows.Length == 0 ? null : Analysis.Summarize(providerRows, hours, KnownPaths);
+        var provider = providerRows.Length == 0 ? null : Analysis.Summarize(providerRows, hours);
         decimal? exportDifference = provider?.Export.Coverage >= .999999m && metrics.Export.Coverage >= .999999m
             ? provider.Export.Kwh - metrics.Export.Kwh : null;
         var cost = Tariffs.Evaluate(rows.Length > 0 ? rows : providerRows, period, Zone);
@@ -98,10 +133,14 @@ public sealed class Queries(Store db, RuntimeOptions options)
         return Calendar.Select(query.Anchor ?? (plant.Synthetic ? Demo.End.AddDays(-1) : today), query.Kind);
     }
 
+    public const int MaxDays = 7320;
+
     public static Period Validate(Period p)
     {
-        if (p.Start.Year < 2000 || p.End.Year > 2100 || p.Days is < 1 or > 732)
-            throw new ArgumentException("Zeitraum muss zwischen einem Tag und 732 Tagen liegen.");
+        // Long periods are aggregated server-side (monthly buckets, daily energy balance), so multi-year
+        // ranges such as "seit Datenbeginn" are allowed. Interval-heavy views keep their own limits.
+        if (p.Start.Year < 2000 || p.End.Year > 2100 || p.Days is < 1 or > MaxDays)
+            throw new ArgumentException($"Zeitraum muss zwischen einem Tag und {MaxDays} Tagen liegen.");
         return p;
     }
 
@@ -125,23 +164,38 @@ public sealed class Queries(Store db, RuntimeOptions options)
         var counterGaps = await db.Aggregates.AsNoTracking().Where(a => a.PlantId == plant.Id &&
             a.Origin == DeviceCounterHistory.GapOrigin && a.Start >= start && a.End <= end).OrderBy(a => a.Start)
             .Select(a => new DeviceCounterHistory.CounterSpan(a.Point, a.Start, a.End, a.Kwh)).ToArrayAsync(ct);
-        var socSamples = period.Days == 1 ? await db.LiveMeasurements.AsNoTracking().Where(m => m.PlantId == plant.Id &&
-            m.Source == DeviceCounterHistory.SocSource && m.MeasuredAt >= start && m.MeasuredAt < end)
-            .OrderBy(m => m.MeasuredAt).Select(m => new SocSample(m.MeasuredAt, m.Value)).ToArrayAsync(ct) : [];
+        var socSamples = await db.LiveMeasurements.AsNoTracking().Where(m => m.PlantId == plant.Id &&
+            m.Source == DeviceCounterHistory.SocSource && m.MeasuredAt >= start && m.MeasuredAt <= end)
+            .OrderBy(m => m.MeasuredAt).Select(m => new SocSample(m.MeasuredAt, m.Value)).ToArrayAsync(ct);
         var connection = plant.ProviderId is null ? null : await db.Connections.AsNoTracking()
             .SingleOrDefaultAsync(c => c.PlantId == plant.Id, ct);
         bool knownPaths = plant.Synthetic || (connection is not null &&
             JsonSerializer.Deserialize<SungrowMapping>(connection.Capabilities)?.ConfirmedAcPaths == true);
-        var result = new DataView(plant, zone, period, rows.Select(r => r.Value()).ToArray(), new(prices.Select(p => p.Value())),
+        var intervals = WithSoc(rows.Select(r => r.Value()).ToArray(), socSamples);
+        var result = new DataView(plant, zone, period, intervals, new(prices.Select(p => p.Value())),
             config is null ? null : JsonSerializer.Deserialize<Battery>(config.Parameters), knownPaths,
             configurations.Any(c => c.Since > period.Start), plant.Revision.ToString(CultureInfo.InvariantCulture), aggregates)
         {
             BatteryTimeline = configurations.Select(c => (Calendar.Utc(c.Since, zone),
                 JsonSerializer.Deserialize<Battery>(c.Parameters))).ToArray(),
-            CounterGaps = counterGaps, HistoricalSoc = socSamples
+            CounterGaps = counterGaps, HistoricalSoc = period.Days == 1 ? socSamples.Where(s => s.At < end).ToArray() : []
         };
+        result = result with { Estimate = BatteryEstimation.Estimate(intervals, result.Daily()) };
         await snapshot.CommitAsync(ct);
         return result;
+    }
+
+    /// <summary>
+    /// Historical SOC is stored as separate device samples. Attach the sample at the interval end (the closing
+    /// state, as in the synthetic data) or, failing that, at the interval start to intervals without SOC.
+    /// </summary>
+    public static Interval[] WithSoc(Interval[] rows, SocSample[] samples)
+    {
+        if (samples.Length == 0) return rows;
+        var byTime = samples.GroupBy(s => s.At.UtcTicks).ToDictionary(g => g.Key, g => g.First().Value);
+        return rows.Select(r => r.Soc is not null ? r :
+            byTime.TryGetValue(r.End.UtcTicks, out var end) ? r with { Soc = end } :
+            byTime.TryGetValue(r.Start.UtcTicks, out var begin) ? r with { Soc = begin } : r).ToArray();
     }
 
     public static object[] Buckets(DataView view, bool providerDaily = false)
@@ -165,8 +219,11 @@ public sealed class Queries(Store db, RuntimeOptions options)
             var end = next < view.Period.End ? next : view.Period.End;
             var report = view.CreateReport(new(cursor, end), byPeriod[key].ToArray());
             var m = providerDaily ? report.ProviderMetrics : report.Metrics;
+            // SOC only exists in intervals; keep it visible when the energies come from daily values.
             result.Add(new { day = cursor, pv = m?.Pv.Kwh, load = m?.Load.Kwh, import = m?.Import.Kwh,
-                export = m?.Export.Kwh, charge = m?.Charge.Kwh, discharge = m?.Discharge.Kwh, soc = m?.SocMean,
+                export = m?.Export.Kwh, charge = m?.Charge.Kwh, discharge = m?.Discharge.Kwh,
+                soc = report.Metrics.SocMean, socMin = report.Metrics.SocMin, socMax = report.Metrics.SocMax,
+                autarky = m?.Autarky, retention = m?.Retention,
                 cost = report.Cost.Net, coverage = m?.Coverage });
             cursor = end;
         }

@@ -3,7 +3,13 @@ using SolarInsight.Domain;
 namespace SolarInsight.Application;
 
 public enum GridMix { Grid, GridPv, GridBattery, GridPvBattery }
-public record HouseholdFlow(decimal Direct, decimal Battery, decimal Grid);
+/// <summary>
+/// Allocation of one balanced interval. <see cref="GridCharge"/> is grid energy that went into the battery and
+/// <see cref="BatteryExport"/> battery energy that went to the grid. Both are the minimum amounts consistent with
+/// the meters; a single interval cannot distinguish simultaneous opposite flows any further.
+/// </summary>
+public record HouseholdFlow(decimal Direct, decimal Battery, decimal Grid, decimal GridCharge = 0,
+    decimal BatteryExport = 0, decimal PvDirect = 0, decimal PvBattery = 0, decimal PvExport = 0);
 public record FlowRing(decimal Total, decimal Direct, decimal Battery, decimal Grid);
 public record FlowBreakdown(FlowRing? Household, FlowRing? Production, decimal ValidHours, decimal MissingHours,
     decimal RejectedHours, decimal RejectedDifferenceKwh);
@@ -17,19 +23,41 @@ public static class EnergyInsights
     public const decimal ZeroKw = .05m;
     public static decimal Tolerance(Interval row) => ZeroKw * row.Hours + .000000001m;
 
-    public static HouseholdFlow? Allocate(Interval row, bool confirmed, out decimal? difference)
+    /// <summary>
+    /// Splits one interval into household sources and PV destinations when all six energy channels exist and the
+    /// balance Load + Charge + Export = PV + Import + Discharge closes within <see cref="Tolerance"/>.
+    /// The balance is a metered identity, so unconfirmed internal AC paths do not block it; callers label the
+    /// result as derived from the balance.
+    /// </summary>
+    public static HouseholdFlow? Allocate(Interval row, out decimal? difference) =>
+        Allocate(row.Pv, row.Load, row.Import, row.Export, row.Charge, row.Discharge, Tolerance(row), out difference);
+
+    public static HouseholdFlow? Allocate(decimal? pv, decimal? load, decimal? import, decimal? export,
+        decimal? charge, decimal? discharge, decimal tolerance, out decimal? difference)
     {
         difference = null;
-        if (!confirmed || row.Pv is not >= 0 || row.Load is not >= 0 || row.Import is not >= 0 ||
-            row.Export is not >= 0 || row.Charge is not >= 0 || row.Discharge is not >= 0) return null;
+        if (pv is not >= 0 || load is not >= 0 || import is not >= 0 || export is not >= 0 ||
+            charge is not >= 0 || discharge is not >= 0) return null;
 
-        decimal consumedDirect = row.Load.Value - row.Import.Value - row.Discharge.Value;
-        decimal generatedDirect = row.Pv.Value - row.Export.Value - row.Charge.Value;
-        decimal tolerance = Tolerance(row);
-        difference = Math.Max(Math.Abs(consumedDirect - generatedDirect),
-            Math.Max(-consumedDirect, -generatedDirect));
+        decimal consumedDirect = load.Value - import.Value - discharge.Value;
+        decimal generatedDirect = pv.Value - export.Value - charge.Value;
+        difference = Math.Abs(consumedDirect - generatedDirect);
         if (difference > tolerance) return null;
-        return new(Math.Max(0, consumedDirect), row.Discharge.Value, row.Import.Value);
+        // A negative direct share means grid and battery supplied more than the household used: the surplus
+        // either charged the battery from the grid or left the battery towards the grid. Attribute the minimum
+        // amount to each path that is actually present; anything left over is an implausible balance.
+        decimal excess = Math.Max(0, -Math.Min(consumedDirect, generatedDirect));
+        decimal gridCharge = Math.Min(excess, Math.Min(import.Value, charge.Value));
+        decimal batteryExport = Math.Min(excess - gridCharge, Math.Min(discharge.Value, export.Value));
+        decimal unexplained = excess - gridCharge - batteryExport;
+        if (unexplained > tolerance)
+        {
+            difference = Math.Max(difference.Value, unexplained);
+            return null;
+        }
+        decimal direct = Math.Max(0, consumedDirect);
+        return new(direct, discharge.Value - batteryExport, import.Value - gridCharge, gridCharge, batteryExport,
+            Math.Max(0, generatedDirect), charge.Value - gridCharge, export.Value - batteryExport);
     }
 
     public static GridMix? Mix(HouseholdFlow? flow, Interval row)
@@ -46,7 +74,7 @@ public static class EnergyInsights
     }
 
     public static (FlowBreakdown Breakdown, GridPhase[] Phases, FlowPoint[] Points) Analyze(
-        Interval[] rows, bool confirmed, Battery? battery, decimal socTolerance, TimeZoneInfo zone, bool includePoints)
+        Interval[] rows, Battery? battery, decimal socTolerance, TimeZoneInfo zone, bool includePoints)
     {
         decimal hours = 0, missing = 0, rejected = 0, difference = 0;
         decimal load = 0, pv = 0, toLoad = 0, toGrid = 0, fromBattery = 0, fromGrid = 0, toBattery = 0, pvDirect = 0;
@@ -54,7 +82,7 @@ public static class EnergyInsights
         var points = new List<FlowPoint>();
         foreach (var row in rows)
         {
-            var flow = Allocate(row, confirmed, out var residual);
+            var flow = Allocate(row, out var residual);
             var mix = Mix(flow, row);
             if (flow is not null)
             {
@@ -64,9 +92,9 @@ public static class EnergyInsights
                 toLoad += flow.Direct;
                 fromBattery += flow.Battery;
                 fromGrid += flow.Grid;
-                toBattery += row.Charge!.Value;
-                toGrid += row.Export!.Value;
-                pvDirect += Math.Max(0, row.Pv.Value - row.Charge.Value - row.Export.Value);
+                toBattery += flow.PvBattery;
+                toGrid += flow.PvExport;
+                pvDirect += flow.PvDirect;
             }
             else if (residual.HasValue) { rejected += row.Hours; difference += residual.Value; }
             else missing += row.Hours;

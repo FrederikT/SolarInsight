@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10 und POT-02 sind umgesetzt, die Prüfung mit privaten Daten steht aus. DATA-05 ist teilweise erledigt, siehe [Datenverfügbarkeit](data-availability.md). |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
@@ -319,6 +319,74 @@ Der gezielte Gerätezähler-Nachimport übernahm in diesen Fenstern acht Interva
 **Abgleich mit der Spezifikation.** Speichererweiterung, Kapazitäts-Nutzen-Kurve, Verbrauchsverschiebung, Zusatzbedarf mit Ladefenster, beide Deckungsmodi, Energieherkunft, Kostenvergleich, kombinierte Szenarien und optionale Amortisation sind vorhanden. Die Demo prüft die kombinierte Simulation und Exporte. Die private Speichersimulation wartet auf bestätigte AC-Pfade und vollständige Modellparameter. Speicherereignisse benötigen je nach Typ Netzleistung, SOC und bestätigte Speichergrenzen. Die geräteunabhängige Überschussanalyse hatte Gesamtsumme und Aufnahmegrenze. Sie zeigt jetzt zusätzlich die Verteilung nach Tag, lokaler Stunde, Monat und Jahreszeit. Der Monatsvergleich weist die im Ladefenster theoretisch nutzbare Einspeisung und die erfassten Stunden aus. Die Heatmap erklärt Einheit, Achsen, Farben und den Unterschied zwischen gemessener Null und fehlendem Intervall. [Ursprüngliche Anforderungen](../SolarInsight_Spezifikation.md)
 
 ESLint, TypeScript, Vite, 25 Unit-Tests, 41 Integrations- und Vertragstests und 13 Linux-Playwright-Tests bestanden. Der erste Playwright-Lauf griff durch die zusätzliche Monatstabelle auf die falsche Tabelle zu. Nach Eingrenzung auf den Abschnitt mit Tagesabweichungen bestand der vollständige Lauf. Der PostgreSQL-Backup-Restore bestand mit einer Testanlage und einem Tarif. Demo und private Instanz wurden über die bestehenden Startwege neu gebaut und gestartet. Beide meldeten `ready`. Im Browser der privaten Instanz wurden der 10. November als Einzeldatum, der Tagesverlauf mit realen Stichproben, die KW 45 mit sieben Tageswerten und 78,2 kWh PV, Quellenwahl, Heatmap und Potenzialansicht geprüft.
+
+### DATA-04 · Lokale Sungrow-CSV-Exporte
+
+Am 13. November 2026 wurden acht CSV-Dateien lokal untersucht. Sie enthalten drei Tagesberichte mit 30-Minuten-Zählerständen, zwei Monatsberichte und zwei Jahresberichte im 15-Minuten-Raster sowie einen Gesamtbericht mit Jahreswerten 2023 bis 2026. Anlagenname und Zeitzone wurden mit der aktiven privaten Anlage abgeglichen. Die überlappenden Gesamtzähler der Monats- und Jahresberichte stimmten an identischen Zeitstempeln überein.
+
+Für die Vorschau wurden aus Gesamtzählerdifferenzen zwischen zwei lokalen Mitternachten die vier vorhandenen Tageskanäle PV-Ertrag, Last, Bezug und Einspeisung berechnet. Tage ohne ausreichende Zeitstempel sowie Kanäle mit unplausibler Schlussdifferenz oder mehr als 0,2 kWh Abweichung zur im Monatsbericht vorhandenen Tagessumme um 23:45 Uhr wurden ausgeschlossen. Der PostgreSQL-Abgleich in einer temporären Tabelle ergab 2.689 Kandidaten. 394 hatten bereits einen API-Tageswert. 385 davon lagen maximal 0,1 kWh auseinander. Neun hatten größere Abweichungen bis 7,6 kWh. 2.295 fehlende Tageswerte blieben übrig, davon 1.448 im Jahr 2024 und 847 von Januar bis Juli 2026. Im Halbstundenbericht vom 9. November stehen um 23:30 Uhr 15,8 kWh Last und in der API für den ganzen Tag 16,1 kWh. Die Vorschau endete mit Rollback. Die automatische Freigabeprüfung hat den anschließenden Schreibaufruf abgelehnt. Es wurde kein CSV-Wert dauerhaft gespeichert. Anwendungscode und lokale Bereitstellung waren nicht betroffen.
+
+Die Exportzähler bieten zusätzlich Viertelstundenprofile für Zeiträume ohne API-Intervalle. Vor einer Nutzung sind die Zeitgrenzen, gerundeten Differenzen, fehlende oder mehrdeutige Zeitstempel bei der Zeitumstellung und rückläufige Zähler zu behandeln. Der Gesamtbericht enthält Jahreswerte einschließlich Batterieladung und -entladung und eignet sich zum Jahresvergleich und zur Gegenprüfung. Die drei Tagesberichte zeigen Batterieladung und -entladung im Halbstundenraster. Die Anlagenberichte enthalten außerdem installierte Leistung (12 kWp), äquivalente Volllaststunden und kumulierte Gesamtzähler. Kein Export enthält SOC oder einen separat belegten AC-PV-Messpunkt. Der Jahreswert 2026 ist ein Zwischenstand.
+
+Nach der ausdrücklichen Freigabe wurde die private Datenbank mit `pg_dump` gesichert und das Archivverzeichnis mit `pg_restore -l` geprüft. Der transaktionale Import fügte 2.295 fehlende Tageswerte für 574 Kalendertage ein. PostgreSQL übersprang bestehende Werte über den eindeutigen Schlüssel. Die zweite Ausführung fügte null Werte ein. Die Datenbankprüfung bestätigte die Quellenrevision `sungrow-portal-csv-day-v1` für ausschließlich PV-Ertrag, Hausverbrauch, Netzbezug und Einspeisung. Die vorhandenen 104 API-Tageswerte je Kanal blieben erhalten. Ein angemeldeter Chrome-Test gegen die private Instanz auf Port 8081 prüfte Readiness, die Jahressummen und Monatsbalken 2024 einschließlich 9.191,5 kWh erfasster PV-Erzeugung, fehlende Batteriewerte für 2024 sowie den unveränderten API-Lastwert von 16,1 kWh am 9. November. Der erste Browserstart scheiterte am fehlenden gebündelten Chromium. Der Test bestand mit installiertem Chrome. Der Import änderte ausschließlich Daten der privaten Instanz. Es gab keinen Anwendungsbuild.
+
+Für künftige Tageskennzahlen genügt die API, solange sie diese liefert. Der Hintergrundabgleich berücksichtigt die vorhandenen Tageswerte. Fehlende Batteriekanäle und Intervallwerte können weiterhin API-Abrufe erfordern. Viertelstundenexporte lohnen sich vor allem als gezielte Ergänzung bei belegten historischen Lücken für Heatmaps und Ladefenster. Ein monatlicher Ablauf hätte einen Mehrwert, falls diese Lücken regelmäßig auftreten und eine zeitlich aufgelöste Analyse benötigt wird. Für historische Jahresvergleiche genügt ein einmaliger Gesamtbericht, bei Bedarf gefolgt von einem Export nach Jahresabschluss. Installierte Leistung und daraus abgeleitete Volllaststunden begründen keinen monatlichen Import.
+
+### DATA-04 · Abdeckung nach den Jahresexporten 2023 und 2025
+
+Die zwei neu hinzugefügten Dateien sind die Anlagen-Jahresberichte 2023 und 2025. Der erste gültige Zählerstand ist am 17. Mai 2023 um 15:00 Uhr in Europe/Berlin erfasst. Das belegt den Beginn der verfügbaren Exportdaten. Ein genaues Installationsdatum ist aus den CSV-Dateien nicht nachweisbar. Nach erneuter lokaler PostgreSQL-Sicherung und Prüfung des Sicherungsverzeichnisses ergänzte dieselbe Importregel 2.270 Tageswerte an 570 Tagen, davon 900 für 2023, 4 für den 31. Dezember 2024 und 1.366 für 2025. Der Jahreswechsel 2024/25 liefert den zuvor fehlenden Schlussstand für den 31. Dezember. Die Wiederholung fügte null Zeilen ein. Die Quellenrevision und vorhandene Daten blieben erhalten. Chrome prüfte die private Readiness, Jahreswerte und Monatsbalken für 2023 bis 2025 sowie den unveränderten API-Referenzwert vom 9. November 2026. Kein Anwendungscode wurde geändert.
+
+Die Prüfung umfasst 1.276 lokale Kalendertage vom 17. Mai 2023 bis zum 12. November 2026 einschließlich. An 1.242 Tagen sind alle vier Tageskanäle vorhanden. 28 Tage haben keinen der vier Werte und sechs sind teilweise belegt. Der laufende 13. November wurde für den Tagesabschluss ausgenommen.
+
+| Jahr | Keine der vier Tageskennzahlen | Fehlende Kanäle an teilweise belegten Tagen |
+| --- | --- | --- |
+| 2023 | 17.05. (Quellbeginn erst 15:00), 14.11. | 19.05. und 09.07. (PV, Last, Einspeisung), 29.07. (Last), 13.08. (PV) |
+| 2024 | 26.–28.08. | — |
+| 2025 | 24.–26.04., 06.–08.05., 18.–19.05., 10.–14.07., 24.–26.08., 16.–17.09., 21.–23.09., 07.–08.10. | 11.10. (Last und Netzbezug) |
+| 2026 | — | 29.07. (Last) |
+
+Für diese Tage sind gezielte Tages- oder Monatsexporte mit vollständigen Tageswerten sinnvoll, sofern das Portal sie liefert. Der 17. Mai 2023 braucht für eine vollständige Tageskennzahl einen belegten Tageswert zur Inbetriebnahme. Ein erneuter Import derselben Dateien schließt die offenen Lücken nicht. Batterieladung und -entladung als Tageswerte fehlen vom 17. Mai 2023 bis 31. Juli 2026. Dafür ist eine Quelle mit abgeschlossenen Batterietageswerten nötig. Die Anlagen-Jahresberichte enthalten diese Kanäle nicht. Der Gesamtbericht enthält sie als Jahressummen.
+
+Viertelstundenwerte fehlen in der Datenbank vollständig vom 17. Mai 2023 bis 31. Juli 2026. Vom 1. August bis 10. Oktober 2026 sowie am 11. November gibt es Intervalle, jedoch kein gemeinsames Intervall mit PV, Last, Bezug und Einspeisung. Alle vier Kanäle sind für jede Viertelstunde nur am 11.–13., 27. und 29. Oktober sowie am 6. November vorhanden. Teilprofile sind am 14.–26., 28. und 30. Oktober bis 5. November sowie am 7.–10. und 12. November vorhanden. Für einen gesonderten Viertelstundenimport liegen bereits Jahresdateien für 2023 bis 2026 vor. Ein neuer Export lohnt sich dort, wo auch diese Quelldateien eine Lücke haben und das Portal vollständigere Daten liefern kann. Dieser Durchgang speicherte Tageswerte für die vier vereinbarten Kanäle.
+
+### KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 · Übernahme und Auswertungen
+
+Am 13. November 2026 wurde das Projekt von Codex übernommen. Die nicht committete DATA-04-Dokumentation ist im ersten Commit auf dem Branch `fix/analytics-handover` gesichert. Die privaten Portal-Exporte in `data/` stehen jetzt in `.gitignore`.
+
+**Ursachen.** Die Ursachen wurden mit lesenden Abfragen auf der privaten Datenbank geprüft.
+- Quoten: Das Frontend zeigte Autarkie und Eigenverbrauch nur bei 100 % Tagesabdeckung des gesamten Zeitraums. Laufende Zeiträume und Quartale mit einem fehlenden Lasttag (etwa der 29.07.2026 in Q3) blieben deshalb leer. Q2 war vollständig und wurde angezeigt. Das Backend lieferte die Quoten zusätzlich nur bei `ConfirmedAcPaths = true`, für die private Anlage ist der Wert `false`.
+- Energieflüsse: `EnergyInsights.Allocate` gab ohne bestätigte AC-Pfade immer `null` zurück und rechnete nur mit Intervallen. Die Gerätezählerintervalle (11.10. bis 12.11.2026) und alle Sungrow-Tageswerte mit Batteriekanälen schließen die Bilanz jedoch exakt (Residuum 0,00 kWh an jedem Tag).
+- Ladezustand: Die 2.776 historischen SOC-Stichproben liegen in `LiveMeasurements` und wurden nur im Tagesdetail als Punktwolke geladen. In `Readings` gibt es keinen SOC. Monats- und Speicheransicht nahmen den SOC zudem aus den Tageswerten, die keinen enthalten.
+- Ladegrenzen und Speicherereignisse: Es ist keine Speicherkonfiguration hinterlegt. Ohne Grenzen war nichts auswertbar.
+- „Seit Datenbeginn“: Die feste Grenze von 732 Tagen war kleiner als der Datenbestand von 1.276 Tagen.
+
+**Änderungen.**
+- `Analysis.Summarize` berechnet die Quoten über gepaarte Werte ohne Pfadbedingung und gibt die gepaarte Abdeckung aus. `DataView.CreateReport` bezieht die Abdeckung auf die verstrichene Zeit.
+- `EnergyBalance` (neu) wählt je Tag vollständige Intervalle oder Tageswerte. So gibt es keine Doppelzählung. Ohne Batteriewerte bleibt ein nicht trennbarer Anteil ausgewiesen. `Allocate` trennt Netzladung und Batterie-Einspeisung als Mindestwerte, statt das Intervall zu verwerfen.
+- `Queries.WithSoc` hängt SOC-Stichproben an die Intervalle (Wert am Intervallende). `BatteryEstimation` schätzt Ladegrenzen (1.–99. Perzentil) und Kapazität (Kleinste-Quadrate aus Netto-Batterieenergie und SOC-Änderung), wenn keine Konfiguration existiert. `DataView.Daily()` ergänzt fehlende Tageswerte aus vollständigen Intervalltagen.
+- Neu sind `StoragePotential` (Tagesbilanzmodell mit Übertrag, obere Abschätzung), `Observations` (Beobachtungen aus Tageswerten) und die Endpunkte `/storage-potential` und `/data-quality`. Die Zeitraumgrenze liegt jetzt bei 7.320 Tagen.
+- Frontend: Die Jahresauswahl hat keinen Stichtag mehr. Neu sind `PeriodCharts` (gestapelte Bilanz mit Einspeisung unter null, Linien, Quoten, Speicher mit SOC-Achse, Tages-, Wochen- und Monatsauflösung, Monatsvergleich je Jahr, Jahreszeiten), Kreisdiagramme aus der Tagesbilanz mit Grundlage und Herkunftsnäherung, die neue Seite „Was bringt ein größerer Speicher?“ und die Datenbestandsübersicht im Datenstatus. Die Intervallsimulation ist als aufklappbarer Bereich erhalten.
+- Bewusste Abweichung: Ein Energiefluss ohne bestätigte AC-Pfade wird nicht mehr unterdrückt, sondern als „aus der gemessenen Bilanz berechnet“ gekennzeichnet. Die PV-Basis ist der Sungrow-PV-Ertrag. Die Intervallsimulation verlangt weiterhin bestätigte Pfade.
+
+**Prüfungen.**
+- .NET-Build Release ohne Warnungen. 35 Unit-Tests bestanden, davon 10 neu für Quoten, Tagesbilanz, Netzladung, Speicherpotenzial, Speicherschätzung und Beobachtungen. 41 Integrations- und Vertragstests mit frischer Test-PostgreSQL (Port 55432) bestanden.
+- TypeScript, ESLint und Vite-Build ohne Fehler. Vite meldet weiterhin den Größenhinweis für den ECharts-Chunk.
+- Playwright gegen die Demo auf Port 8080: 12 bestanden, 1 übersprungen (A22 braucht einen separaten privaten Testserver). Drei Tests wurden an geänderte Texte angepasst: Diagrammname, KPI-Erklärung und die aufklappbare Intervallsimulation. Ein Zwischenlauf direkt nach einem abgebrochenen Lauf hatte drei Fehlschläge (Zeitüberschreitungen). Der anschließende vollständige Lauf war grün.
+- Demo-API (synthetische Daten): Jahr, Quartal und „Seit Datenbeginn“ (730 Tage, 1,7 s) liefern Kreisdiagramme, Quoten und SOC. Die geschätzte Kapazität von 9,8 kWh liegt nahe den konfigurierten 9,6 kWh. Im Browser geprüft: Jahresauswahl ohne Stichtag, gestapelte Bilanz, Speicheransicht mit SOC-Achse, Kreisdiagramme und Potenzialseite.
+- Private Instanz (Port 8081) mit echten Daten geprüft, nach Anmeldung durch den Betreiber (Browser und API, angemeldete Sitzung):
+  - November 2026: Autarkie 50,3 %, Eigenverbrauch 99 %, jeweils Basis 93,8 %. Die Kreisdiagramme stammen aus einem Intervalltag, 11 Sungrow-Tagen und dem laufenden Tag. Ladegrenzen, Netzbezugszeiten, nächtlicher Bezug und Beobachtungen sind gefüllt.
+  - Q3 2026: Autarkie 85,9 % (Basis 98,9 %). Ab August ist der Speicheranteil getrennt, davor als nicht trennbar ausgewiesen.
+  - Q4 2026: 58,6 % (Basis 98,2 %).
+  - Jahr 2025: 65,1 % (Basis 93,4 %). Mangels Batteriewerten ist das ganze Jahr nicht trennbar ausgewiesen.
+  - „Seit Datenbeginn“: 66,2 %, Antwortzeit 130 ms.
+  - Tagesansicht 10.11.2026: SOC an 96 von 96 Intervallen.
+  - Geschätzte Speicherkapazität 8,3–8,6 kWh, Ladegrenzen 0 % bzw. 86–100 %.
+  - Der niedrige mittlere SOC im November (13,6 %) entspricht den gespeicherten Gerätewerten: An vielen Tagen stand der Speicher bei 0 %, und auch die Momentanwerte vom 11. und 12.11. zeigen 0–5 %.
+  - Speicherpotenzial über 1.242 Tage: +5 kWh ersetzen rund 1.279 kWh Netzbezug (etwa 79 € pro Jahr bei Standardpreisen). Der vorhandene Speicher hob die Autarkie an 104 Tagen von etwa 39 % auf 72 %.
+  - `/data-quality` antwortet.
+  - Danach korrigiert: Singular „1 Tag“ in den Grundlagentexten der Kreisdiagramme.
+
+**Bereitstellung.** Demo (Port 8080) per Docker Compose neu gebaut. Docker Desktop war gestoppt und wurde dafür gestartet. Die private Instanz (Port 8081) läuft im neuen Release-Verzeichnis `app-claude-analytics`. `start.ps1` zeigt darauf, die vorherige Fassung liegt als `start.ps1.before-claude-analytics` daneben. Das portable PostgreSQL der privaten Instanz war gestoppt. Es wurde über den bestehenden `pg_ctl`-Weg gestartet und führte eine automatische Wiederherstellung nach unsauberem Herunterfahren durch. Beide Instanzen melden `ready` auf `/health/ready`. Datenbanken, Konfiguration und Zugangsdaten blieben unverändert, auf die private Datenbank wurde nicht geschrieben.
 
 ### Lokale Bereitstellung
 

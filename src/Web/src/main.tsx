@@ -8,6 +8,8 @@ import { SettingsView } from './Settings'
 import { duration, ImportForm } from './Provider'
 import { connectionLabel, type ProviderStatus } from './ProviderSetup'
 import { LiveView } from './LiveView'
+import { StoragePotential } from './StoragePotential'
+import { DataQuality } from './DataQuality'
 import './style.css'
 
 const ScenarioEditor = lazy(() => import('./Scenario').then(m => ({ default: m.ScenarioEditor })))
@@ -116,7 +118,7 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
               <option key={id} value={id}>{label}</option>)}</select></label>}
           {!detailEnd && (kind !== 'all' && kind !== 'custom' || day) ? <>
             <button className="secondary" aria-label="Vorheriger Zeitraum" onClick={() => shift(-1)}>←</button>
-            {!day && ['week', 'month', 'quarter', 'season'].includes(kind) ? <PeriodFields kind={kind} anchor={anchor}
+            {!day && ['week', 'month', 'quarter', 'season', 'year'].includes(kind) ? <PeriodFields kind={kind} anchor={anchor}
               change={value => update({ anchor: value })} /> : <label>Stichtag<input type="date" value={day || anchor} onChange={e => e.target.value && update(day ?
                 { detail: e.target.value } : { anchor: e.target.value })} /></label>}
             <button className="secondary" aria-label="Nächster Zeitraum" onClick={() => shift(1)}>→</button>
@@ -131,13 +133,16 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
         {page === 'overview' && <><Overview query={query} drill={drill} day={day} evidence={!!detailEnd} simulation={simulation}
           version={version} liveVersion={liveVersion} /></>}
         {page === 'potential' && <><h1>Speicher & Potenzial</h1>
-          <p>Wähle oben den Zeitraum. Mit der Simulation vergleichst du den bisherigen Betrieb mit einem größeren Speicher,
-            verschiebbarem Verbrauch oder zusätzlichem Bedarf. Die Überschussanalyse darunter zeigt, wann eine zusätzliche Last
-            gemessene Einspeisung hätte nutzen können.</p>
+          <p>Wähle oben den Zeitraum. Zuerst steht eine Abschätzung für zusätzliche Speicherkapazität aus den Tageswerten.
+            Darunter folgen die Auswertung der Einspeisung für eine zusätzliche Last (etwa ein Elektroauto) und die
+            detaillierte Intervallsimulation, sofern die Messdaten dafür ausreichen.</p>
+          <StoragePotential query={query} />
+          <Surplus query={query} zone={zone} drill={drill} />
+          <details className="panel"><summary>Detaillierte Intervallsimulation (Speicher, Lastverschiebung, Zusatzbedarf)</summary>
           {status?.data?.report && plant.data.capabilities.simulation ? <Suspense fallback={<Status />}><ScenarioEditor period={status.data.report.period}
             simulation={simulation} setSimulation={setSimulation} drill={drill} /></Suspense> : <Status error={status?.error}
-              text={plant.data.capabilities.simulation ? 'Zeitraum wird geladen …' : 'Die Speichersimulation benötigt PV und Hausverbrauch im selben Zeitraster, bestätigte AC-Energiepfade und Speicherparameter. Die Auswertung der gemessenen Einspeisung ist unten verfügbar.'} />}
-          <Surplus query={query} zone={zone} drill={drill} /></>}
+              text={plant.data.capabilities.simulation ? 'Zeitraum wird geladen …' : 'Die Intervallsimulation rechnet jede Viertelstunde nach und braucht dafür PV und Hausverbrauch im selben Zeitraster sowie bestätigte AC-Energiepfade. Für diese Anlage ist das noch nicht bestätigt. Die Abschätzung oben nutzt stattdessen die Tageswerte.'} />}
+          </details></>}
         {page === 'status' && <><h1>Datenstatus</h1>{status?.data ? <>
           <Panel title="Import und Verbindung">
             <dl className="facts">
@@ -186,7 +191,8 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
               {gap.kind === 'daily' ? ' Tageswerte' : ' Minutenwerte'} · {gap.open ? 'offen nach ' + gap.attempts + ' Versuchen' :
                 'eingeplant ab ' + stamp(gap.due, zone)}{gap.error === 'incomplete-history' && ' · Quelle lieferte keine vollständige Reihe'}</li>)}</ul>
           </details></Panel>}
-          <Panel title="Abdeckung und Datenlücken">
+          <DataQuality />
+          <Panel title="Abdeckung und Datenlücken im gewählten Zeitraum">
             <p>Gemeinsame Abdeckung von PV und Hausverbrauch {pct(status.data.report.metrics.coverage)}
               {status.data.report.resolutionMinutes != null ? ' · Auflösung ' + number(status.data.report.resolutionMinutes) + ' Minuten' :
                 status.data.report.providerMetrics ? ' · Sungrow-Tageswerte' : ''}</p>

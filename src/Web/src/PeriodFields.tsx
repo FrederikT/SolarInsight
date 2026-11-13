@@ -19,10 +19,18 @@ export function PeriodFields({ kind, anchor, change }: { kind: string; anchor: s
     kind === 'quarter' ? Math.floor(month / 3) : kind === 'season' ? (Math.floor((month + 1) / 3) + 3) % 4 : month
   const choices = kind === 'week' ? Array.from({ length: weeks(year) }, (_, i) => 'KW ' + (i + 1)) :
     kind === 'quarter' ? ['Q1', 'Q2', 'Q3', 'Q4'] : kind === 'season' ? seasons : months
-  const choose = (y: number, i: number) => change(iso(kind === 'week' ? addDays(monday(y), Math.min(i, weeks(y) - 1) * 7) :
+  const choose = (y: number, i: number) => change(iso(kind === 'year' ? at(y, 0) :
+    kind === 'week' ? addDays(monday(y), Math.min(i, weeks(y) - 1) * 7) :
     at(y, kind === 'quarter' ? i * 3 : kind === 'season' ? 2 + i * 3 : i)))
   const label = ({ week: 'Kalenderwoche', month: 'Monat', quarter: 'Quartal', season: 'Jahreszeit' } as Record<string, string>)[kind]
   const title = choices[index] + ' ' + (kind === 'season' && index === 3 ? year + '/' + String(year + 1).slice(-2) : year)
+  // A calendar year is always evaluated as a whole; a reference date would only be confusing.
+  if (kind === 'year') return <>
+    <label>Jahr<select aria-label="Jahr" value={year} onChange={e => choose(Number(e.target.value), 0)}>
+      {Array.from({ length: 100 }, (_, i) => 2000 + i).map(y => <option key={y}>{y}</option>)}
+    </select></label>
+    <strong>{year}</strong>
+  </>
   return <>
     <label>{label}<select aria-label={label} value={index} onChange={e => choose(year, Number(e.target.value))}>
       {choices.map((choice, i) => <option key={choice} value={i}>{choice}</option>)}

@@ -13,7 +13,7 @@ test('A20/A23 Demo: Zeitraum, Tagesdetail, Speicher, kombinierter Lauf und Expor
   await page.getByText('Hinweise zur Datengrundlage', { exact: false }).click()
   await expect(page.getByText(/^Gemeinsame Minutenabdeckung: 100 %/)).toBeVisible()
   if (process.env.SOLAR_SCREENSHOT) {
-    await expect(page.getByRole('img', { name: 'Energieverlauf' })).toBeVisible()
+    await expect(page.getByRole('img', { name: 'Verlauf im Zeitraum' })).toBeVisible()
     await page.screenshot({ path: process.env.SOLAR_SCREENSHOT, fullPage: true })
   }
   await page.getByRole('combobox', { name: 'Zeitraum', exact: true }).selectOption('week')
@@ -34,6 +34,9 @@ test('A20/A23 Demo: Zeitraum, Tagesdetail, Speicher, kombinierter Lauf und Expor
   await page.getByRole('button', { name: 'Speicher & Potenzial', exact: true }).click()
   await expect(page.getByRole('img', { name: 'Gemessene Einspeisung nach lokaler Stunde' })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Im Ladefenster nutzbar (kWh)', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Was bringt ein größerer Speicher?' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Vermiedener Netzbezug nach Zusatzkapazität' })).toBeVisible()
+  await page.locator('summary', { hasText: 'Detaillierte Intervallsimulation' }).click()
   await page.getByLabel('Speicher ändern').check()
   await page.getByLabel('Kapazität vor Reserve (kWh)').fill('16')
   await page.getByRole('button', { name: 'Simulation starten' }).click()
