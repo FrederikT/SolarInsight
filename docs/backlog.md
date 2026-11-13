@@ -137,3 +137,49 @@ Die bestehende Live-Diagnose liest nur die aktive Zuordnung. Die historische Pro
 **Status:** Erledigt. Potenzialansicht lokal geprüft, kombinierte Simulation und Exporte mit Demodaten geprüft. [Nachweis](implementation-status.md#data-01-live-02-ux-04-ux-05-und-pot-01--befunde-vom-11-november).
 
 **Abnahme.** Die Seite erklärt Kapazität, Verschiebung und Zusatzbedarf anhand ihrer Eingaben und Ergebnisse. Einspeisung ist nach Tag, Stunde, Monat und Jahreszeit auswertbar. Für ein Ladefenster sind nutzbare kWh und erfasste Stunden sichtbar. Fehlende Voraussetzungen für die private Simulation sind benannt.
+
+## KPI-01 · Autarkie und Eigenverbrauch auch bei unvollständigen Zeiträumen
+
+**Status:** Umgesetzt und mit Unit-, Integrations- und Browsertests (Demo und Fixture) geprüft. Prüfung mit privaten Daten im Browser ausstehend (Anmeldung). [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+
+Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle vier Energiewerte vorlagen.
+
+**Abnahme.** Die Quoten werden über die Tage bzw. Intervalle berechnet, an denen beide Größen vorliegen. Die gepaarte Basis steht am Wert. Laufende Zeiträume beziehen sich auf die verstrichene Zeit. Ein fehlender Einzelwert blendet die Quote nicht aus.
+
+## FLOW-01 · Energieflüsse, Stromherkunft und Beobachtungen aus Tageswerten
+
+**Status:** Umgesetzt und geprüft wie KPI-01. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+
+„Woher kam mein Haushaltsstrom?“, „Wohin ging mein PV-Ertrag?“, die Ladegrenzen, „Wann brauche ich Netzstrom?“ und die Beobachtungen blieben leer, auch bei 100 % Tagesabdeckung.
+
+**Abnahme.** Die Kreisdiagramme zeigen kWh und Prozent und summieren sich zum Hausverbrauch bzw. PV-Ertrag. Je Tag wird genau eine Quelle verwendet (vollständige Intervalle oder Tageswerte). Tage ohne Batteriewerte erscheinen als gesondert ausgewiesener, nicht trennbarer Anteil. Die Grundlage (Intervalle, Tageswerte, fehlende Tage) steht unter jedem Diagramm. Netzladung des Speichers wird als Mindestwert getrennt. Beobachtungen aus Tageswerten erscheinen auch ohne Intervalle. Uhrzeitbezogene Auswertungen erklären, dass sie Intervalle brauchen.
+
+## BAT-01 · Ladezustand und Batteriewerte in Tages-, Monats- und Langzeitansichten
+
+**Status:** Umgesetzt und mit Demo und Tests geprüft. Prüfung mit privaten Daten ausstehend. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+
+**Abnahme.** Historische SOC-Stichproben erscheinen im Tagesverlauf und in der Monats-, Quartals- und Jahresansicht (Mittel, Minimum, Maximum, eigene Prozentachse). Batterieladung und -entladung erscheinen in Langzeitdiagrammen. Ohne Speicherparameter werden Ladegrenzen und Kapazität aus den Messwerten geschätzt und als Schätzung gekennzeichnet.
+
+## UX-09 · Zeitraumauswahl Jahr und „Seit Datenbeginn“
+
+**Status:** Umgesetzt und im Browser (Demo) geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+
+**Abnahme.** Die Jahresauswahl zeigt nur das Jahr und keinen Stichtag. „Seit Datenbeginn“ funktioniert auch über mehr als 732 Tage. Lange Zeiträume werden serverseitig zu Monaten zusammengefasst.
+
+## UX-10 · Verlaufsdiagramme für Quartale, Jahreszeiten und Jahre
+
+**Status:** Umgesetzt und im Browser (Demo) geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+
+**Abnahme.** Der Verlauf bietet eine gestapelte Energiebilanz mit Einspeisung unter der Nulllinie, einzelne Messgrößen als Linien mit ein- und ausblendbaren Reihen, Quoten und Speicher. Die Auflösung (Tage, Wochen, Monate) wird automatisch gewählt und lässt sich ändern. Ab etwa einem Jahr erscheinen ein Monatsvergleich je Jahr und Tagesmittel je Jahreszeit. Achsen und Einheiten sind beschriftet.
+
+## POT-02 · „Speicher & Potenzial“ verständlich überarbeiten
+
+**Status:** Umgesetzt und mit Demo und Tests geprüft. Prüfung mit privaten Daten ausstehend. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+
+**Abnahme.** Eingaben sind beschriftet und erklärt, Preise kommen aus den Tarifen oder sind als Standardannahme gekennzeichnet. Die Seite vergleicht die heutige Situation mit mehreren Zusatzkapazitäten (Netzbezug, Einspeisung, Autarkie, Eigenverbrauch, Ersparnis, Amortisation, Vollzyklen) und zeigt den Monatsverlauf. Rechenweg und Grenzen (obere Abschätzung aus Tagesbilanzen) sind sichtbar. Die bestehende Intervallsimulation bleibt erreichbar.
+
+## DATA-05 · Datenqualität sichtbar machen und Batterie-Tageswerte nachladen
+
+**Status:** Teilweise erledigt. Übersicht und Dokumentation sind umgesetzt. Offen ist der API-Testimport eines Monats vor August 2026. Er klärt, ob iSolarCloud Batterie-Tageswerte rückwirkend liefert. Das erfordert eine Freigabe des Betreibers und eine Sicherung vorab. [Übersicht](data-availability.md).
+
+**Abnahme.** Der Datenstatus zeigt je Monat und Messgröße vorhandene Tageswerte, vollständige Intervalle und SOC-Stichproben sowie Lücken und Quellen. Für jede Lückenart ist der Nachimportweg mit seinem Risiko für bestehende Daten beschrieben. Nach einem Testimport ist dokumentiert, ob die Batterie-Tageswerte rückwirkend verfügbar sind.

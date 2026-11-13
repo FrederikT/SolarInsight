@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10 und POT-02 sind umgesetzt, die Prüfung mit privaten Daten steht aus. DATA-05 ist teilweise erledigt, siehe [Datenverfügbarkeit](data-availability.md). |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
@@ -348,6 +348,34 @@ Die Prüfung umfasst 1.276 lokale Kalendertage vom 17. Mai 2023 bis zum 12. Nove
 Für diese Tage sind gezielte Tages- oder Monatsexporte mit vollständigen Tageswerten sinnvoll, sofern das Portal sie liefert. Der 17. Mai 2023 braucht für eine vollständige Tageskennzahl einen belegten Tageswert zur Inbetriebnahme. Ein erneuter Import derselben Dateien schließt die offenen Lücken nicht. Batterieladung und -entladung als Tageswerte fehlen vom 17. Mai 2023 bis 31. Juli 2026. Dafür ist eine Quelle mit abgeschlossenen Batterietageswerten nötig. Die Anlagen-Jahresberichte enthalten diese Kanäle nicht. Der Gesamtbericht enthält sie als Jahressummen.
 
 Viertelstundenwerte fehlen in der Datenbank vollständig vom 17. Mai 2023 bis 31. Juli 2026. Vom 1. August bis 10. Oktober 2026 sowie am 11. November gibt es Intervalle, jedoch kein gemeinsames Intervall mit PV, Last, Bezug und Einspeisung. Alle vier Kanäle sind für jede Viertelstunde nur am 11.–13., 27. und 29. Oktober sowie am 6. November vorhanden. Teilprofile sind am 14.–26., 28. und 30. Oktober bis 5. November sowie am 7.–10. und 12. November vorhanden. Für einen gesonderten Viertelstundenimport liegen bereits Jahresdateien für 2023 bis 2026 vor. Ein neuer Export lohnt sich dort, wo auch diese Quelldateien eine Lücke haben und das Portal vollständigere Daten liefern kann. Dieser Durchgang speicherte Tageswerte für die vier vereinbarten Kanäle.
+
+### KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 · Übernahme und Auswertungen
+
+Am 13. November 2026 wurde das Projekt von Codex übernommen. Die nicht committete DATA-04-Dokumentation ist im ersten Commit auf dem Branch `fix/analytics-handover` gesichert. Die privaten Portal-Exporte in `data/` stehen jetzt in `.gitignore`.
+
+**Ursachen.** Die Ursachen wurden mit lesenden Abfragen auf der privaten Datenbank geprüft.
+- Quoten: Das Frontend zeigte Autarkie und Eigenverbrauch nur bei 100 % Tagesabdeckung des gesamten Zeitraums. Laufende Zeiträume und Quartale mit einem fehlenden Lasttag (etwa der 29.07.2026 in Q3) blieben deshalb leer. Q2 war vollständig und wurde angezeigt. Das Backend lieferte die Quoten zusätzlich nur bei `ConfirmedAcPaths = true`, für die private Anlage ist der Wert `false`.
+- Energieflüsse: `EnergyInsights.Allocate` gab ohne bestätigte AC-Pfade immer `null` zurück und rechnete nur mit Intervallen. Die Gerätezählerintervalle (11.10. bis 12.11.2026) und alle Sungrow-Tageswerte mit Batteriekanälen schließen die Bilanz jedoch exakt (Residuum 0,00 kWh an jedem Tag).
+- Ladezustand: Die 2.776 historischen SOC-Stichproben liegen in `LiveMeasurements` und wurden nur im Tagesdetail als Punktwolke geladen. In `Readings` gibt es keinen SOC. Monats- und Speicheransicht nahmen den SOC zudem aus den Tageswerten, die keinen enthalten.
+- Ladegrenzen und Speicherereignisse: Es ist keine Speicherkonfiguration hinterlegt. Ohne Grenzen war nichts auswertbar.
+- „Seit Datenbeginn“: Die feste Grenze von 732 Tagen war kleiner als der Datenbestand von 1.276 Tagen.
+
+**Änderungen.**
+- `Analysis.Summarize` berechnet die Quoten über gepaarte Werte ohne Pfadbedingung und gibt die gepaarte Abdeckung aus. `DataView.CreateReport` bezieht die Abdeckung auf die verstrichene Zeit.
+- `EnergyBalance` (neu) wählt je Tag vollständige Intervalle oder Tageswerte. So gibt es keine Doppelzählung. Ohne Batteriewerte bleibt ein nicht trennbarer Anteil ausgewiesen. `Allocate` trennt Netzladung und Batterie-Einspeisung als Mindestwerte, statt das Intervall zu verwerfen.
+- `Queries.WithSoc` hängt SOC-Stichproben an die Intervalle (Wert am Intervallende). `BatteryEstimation` schätzt Ladegrenzen (1.–99. Perzentil) und Kapazität (Kleinste-Quadrate aus Netto-Batterieenergie und SOC-Änderung), wenn keine Konfiguration existiert. `DataView.Daily()` ergänzt fehlende Tageswerte aus vollständigen Intervalltagen.
+- Neu sind `StoragePotential` (Tagesbilanzmodell mit Übertrag, obere Abschätzung), `Observations` (Beobachtungen aus Tageswerten) und die Endpunkte `/storage-potential` und `/data-quality`. Die Zeitraumgrenze liegt jetzt bei 7.320 Tagen.
+- Frontend: Die Jahresauswahl hat keinen Stichtag mehr. Neu sind `PeriodCharts` (gestapelte Bilanz mit Einspeisung unter null, Linien, Quoten, Speicher mit SOC-Achse, Tages-, Wochen- und Monatsauflösung, Monatsvergleich je Jahr, Jahreszeiten), Kreisdiagramme aus der Tagesbilanz mit Grundlage und Herkunftsnäherung, die neue Seite „Was bringt ein größerer Speicher?“ und die Datenbestandsübersicht im Datenstatus. Die Intervallsimulation ist als aufklappbarer Bereich erhalten.
+- Bewusste Abweichung: Ein Energiefluss ohne bestätigte AC-Pfade wird nicht mehr unterdrückt, sondern als „aus der gemessenen Bilanz berechnet“ gekennzeichnet. Die PV-Basis ist der Sungrow-PV-Ertrag. Die Intervallsimulation verlangt weiterhin bestätigte Pfade.
+
+**Prüfungen.**
+- .NET-Build Release ohne Warnungen. 35 Unit-Tests bestanden, davon 10 neu für Quoten, Tagesbilanz, Netzladung, Speicherpotenzial, Speicherschätzung und Beobachtungen. 41 Integrations- und Vertragstests mit frischer Test-PostgreSQL (Port 55432) bestanden.
+- TypeScript, ESLint und Vite-Build ohne Fehler. Vite meldet weiterhin den Größenhinweis für den ECharts-Chunk.
+- Playwright gegen die Demo auf Port 8080: 12 bestanden, 1 übersprungen (A22 braucht einen separaten privaten Testserver). Drei Tests wurden an geänderte Texte angepasst: Diagrammname, KPI-Erklärung und die aufklappbare Intervallsimulation. Ein Zwischenlauf direkt nach einem abgebrochenen Lauf hatte drei Fehlschläge (Zeitüberschreitungen). Der anschließende vollständige Lauf war grün.
+- Demo-API (synthetische Daten): Jahr, Quartal und „Seit Datenbeginn“ (730 Tage, 1,7 s) liefern Kreisdiagramme, Quoten und SOC. Die geschätzte Kapazität von 9,8 kWh liegt nahe den konfigurierten 9,6 kWh. Im Browser geprüft: Jahresauswahl ohne Stichtag, gestapelte Bilanz, Speicheransicht mit SOC-Achse, Kreisdiagramme und Potenzialseite.
+- **Ausstehend:** Die Browserprüfung der privaten Instanz mit echten Daten braucht eine Anmeldung durch den Betreiber. Die Rechenlogik wurde nur gegen die Datenbankabfragen abgeglichen (Tagesbilanz, SOC-Bereich 0–100 %, Batterietageswerte ab August 2026).
+
+**Bereitstellung.** Demo (Port 8080) per Docker Compose neu gebaut. Docker Desktop war gestoppt und wurde dafür gestartet. Die private Instanz (Port 8081) läuft im neuen Release-Verzeichnis `app-claude-analytics`. `start.ps1` zeigt darauf, die vorherige Fassung liegt als `start.ps1.before-claude-analytics` daneben. Das portable PostgreSQL der privaten Instanz war gestoppt. Es wurde über den bestehenden `pg_ctl`-Weg gestartet und führte eine automatische Wiederherstellung nach unsauberem Herunterfahren durch. Beide Instanzen melden `ready` auf `/health/ready`. Datenbanken, Konfiguration und Zugangsdaten blieben unverändert, auf die private Datenbank wurde nicht geschrieben.
 
 ### Lokale Bereitstellung
 
