@@ -66,6 +66,12 @@ Der erneute Import des 9. November änderte keine Datensätze. Gespeichert sind 
 
 Der EU-Endpunkt und die Freigabe für das Gerät sind bestätigt. Die gespeicherten Tageswerte entsprechen den Portalreferenzen von 13,6 kWh für PV und 16,1 kWh für Last. Für den offenen Gegenvergleich PV, Last, Netz, Batterie und SOC mit den Portalwerten derselben Zeitstempel am 9. November gegen Mittag vergleichen.
 
+## DATA-04 · Historische Sungrow-Tageswerte aus lokalen CSV-Dateien ergänzen
+
+**Status:** Erledigt für die vorliegenden Exporte. In zwei Durchgängen wurden 4.565 fehlende Tageswerte für die vier bekannten Kanäle importiert. Wiederholungsimport, Datenbankabgleich und private Übersicht wurden geprüft. Offene Quelllücken sind mit Zeiträumen dokumentiert. [Nachweis und Abdeckung](implementation-status.md#data-04--abdeckung-nach-den-jahresexporten-2023-und-2025).
+
+**Abnahme.** Fehlende Tageswerte für PV-Ertrag, Hausverbrauch, Netzbezug und Einspeisung werden ausschließlich für die passende private Anlage ergänzt. Vorhandene Werte bleiben erhalten. Die Quellenrevision ist nachvollziehbar, und eine Wiederholung erzeugt keine Duplikate. Zusätzliche Exportdaten und eine Importfunktion in der Oberfläche bleiben zur Entscheidung offen.
+
 ## DATA-02 · Aktuelle Sungrow-Messpunkte mit iSolarCloud abgleichen
 
 **Status:** PV-DC-Leistung, Wechselrichter-Wirkleistung und SOC sind umgesetzt. Die AC-PV-Bilanz und Speichersimulation mit privaten Messdaten sind zurückgestellt, bis ein separater AC-PV-Messwert für die Anlage bestätigt ist. [Nachweis](implementation-status.md#data-01-und-data-02--erweiterter-nachimport-und-anzeige) · [Abnahmeumfang](today-acceptance.md#abnahme).
