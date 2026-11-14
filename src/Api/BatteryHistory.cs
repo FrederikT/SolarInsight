@@ -107,6 +107,13 @@ public sealed class BatteryHistory(IServiceScopeFactory scopes, IDeviceCounterSo
                         Update(s => s with { Calls = s.Calls + 1, RemainingCalls = Math.Max(0, s.RemainingCalls - 1) });
                         var snapshot = Read(report, day, midnight);
                         var absent = BatteryCounterDays.Channels.Where(c => snapshot?.Kwh.ContainsKey(c) != true).ToArray();
+                        // Empty answers are often transient; ask once more after a pause before giving up the day.
+                        if (absent.Length == BatteryCounterDays.Channels.Length && attempt == 0)
+                        {
+                            Note("leere Antwort, wiederholt");
+                            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                            continue;
+                        }
                         if (absent.Length > 0) Note(absent.Length == BatteryCounterDays.Channels.Length
                             ? "kein Zählerstand um 00:00" : "unvollständiger Zählerstand: " + string.Join(", ", absent));
                         return snapshots[day] = snapshot;

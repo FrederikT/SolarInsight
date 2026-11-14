@@ -86,6 +86,16 @@ public class EnergyBalanceTests
     }
 
     [Fact]
+    public void DaysBeforeTheFirstStoredValueAreNotCountedAsMissing()
+    {
+        var result = EnergyBalance.Evaluate([], [Day(10, 20, 15, 1, 5, 9, 8), Day(12, 20, 15, 1, 5, 9, 8)],
+            new(First, First.AddDays(14)), Zone, First.AddDays(30), false);
+        Assert.Equal(4, result.Days);
+        Assert.Equal(2, result.HouseholdBasis.Daily);
+        Assert.Equal([First.AddDays(11), First.AddDays(13)], result.HouseholdBasis.MissingDays);
+    }
+
+    [Fact]
     public void UnbalancedDailyValuesAreRejectedInsteadOfGuessed()
     {
         var result = EnergyBalance.Evaluate([], [Day(0, 20, 15, 1, 5, 2, 8)], new(First, First.AddDays(1)), Zone, First.AddDays(5), false);

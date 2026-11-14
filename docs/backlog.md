@@ -186,7 +186,7 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 
 ## DATA-06 · Historische Batterie-Tageswerte aus Gerätezählern nachladen
 
-**Status:** Umgesetzt und mit privaten Daten in der Vorschau geprüft. Der Schreiblauf auf der privaten Datenbank wartet auf die Freigabe des Betreibers. [Nachweis](implementation-status.md#data-06--batterie-tageswerte-aus-gerätezählern).
+**Status:** Erledigt. Auf der privaten Datenbank ausgeführt: 1.131 von 1.157 Tagen ergänzt, Abgleich mit den CSV-Jahressummen dokumentiert. [Nachweis](implementation-status.md#data-06--batterie-tageswerte-aus-gerätezählern).
 
 **Hintergrund.** Vor August 2026 fehlen Batterieladung und -entladung als Tageswert. Energieflüsse zeigen dort „PV direkt oder Speicher (nicht trennbar)“. Die Gerätehistorie liefert die Gesamtzähler 13034 (Batterieladung) und 13035 (Batterieentladung) sowie PV, Last, Bezug, Einspeisung und SOC mindestens ab dem 01.06.2023. Der bestehende Gerätezähler-Nachimport schreibt historische Tage nicht, weil er vorhandene Sungrow-Tageswerte für alle sechs Kanäle voraussetzt.
 

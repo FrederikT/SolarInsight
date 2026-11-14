@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist umgesetzt, der Schreiblauf wartet auf Freigabe, siehe [Datenverfügbarkeit](data-availability.md). |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist umgesetzt und auf der privaten Datenbank ausgeführt, siehe [Datenverfügbarkeit](data-availability.md). |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
@@ -436,7 +436,33 @@ Am 14. November 2026 folgte eine Prüfung der neuen Auswertungen und der Datenqu
   - Der 28.08. hatte keinen gespeicherten Tageswert und wäre mit allen sechs Kanälen ergänzt worden.
   - Der erste Vorschaulauf ohne Wiederholungen verlor acht Tage durch einzelne fehlgeschlagene Abrufe. Seitdem werden solche Fehler wiederholt und als Hinweis gezählt.
 
-**Ausstehend.** Der Schreiblauf für Juni 2023 bis Juli 2026 (rund 1.150 offene Tage, etwa 5 Stunden bei 15 s Aufrufabstand) braucht die Freigabe des Betreibers und vorher eine Sicherung mit `pg_dump`. Mai 2023 vor dem 01.06. ist ungeprüft.
+**Schreiblauf auf der privaten Datenbank (14. November 2026, nach Freigabe).**
+- Vorher gesichert mit `pg_dump`: `before-battery-history-20261114-004735.dump`, 14 Tabellen laut `pg_restore -l`.
+- Erster Anlauf mit 15-Minuten-Fenster: für Juni 2023 fehlten fast alle Mitternachtsstände. Nach sechs Tagen ohne Schreibvorgang abgebrochen und auf ein Stundenfenster umgestellt.
+- Lauf 1 (01.06.2023 bis 31.07.2026, 1.157 offene Tage): 490 Tage übernommen, 667 ohne Zählerstand, keiner verworfen. Einzelabfragen zeigten, dass die Werte für einen Teil dieser Tage existieren und die Antworten nur zufällig leer waren.
+- Leere Antworten werden seitdem nach 30 s einmal wiederholt.
+- Lauf 2 (dieselben Grenzen, nur die 667 offenen Tage): 641 Tage übernommen, 3 verworfen, 23 ohne Zählerstand. Zusammen 1.331 Werte geschrieben. 333 Antworten waren beim ersten Versuch leer.
+- Verworfen wurden der 03.07., 08.07. und 14.08.2023: Dort weichen PV bzw. Einspeisung der Zähler um mehr als 0,2 kWh von den gespeicherten CSV-Tageswerten ab.
+- Ohne Zählerstand blieben unter anderem der 27./28.06. und 26./27.08.2024 sowie mehrere Tage im April, Mai, Juli, August und September 2025. Sie decken sich überwiegend mit den bekannten Lücken der CSV-Daten.
+
+**Abgleich mit den Jahressummen des Portal-Gesamtberichts.**
+
+| Jahr | Tage mit Batteriewert | Ladung DB / CSV (kWh) | Entladung DB / CSV (kWh) | Bewertung |
+| --- | --- | --- | --- | --- |
+| 2023 | 211 von 228 | 1.056,2 / 1.150,7 | 938,3 / 987,7 | Die CSV-Summe enthält den 17. bis 31.05. und 17 weitere Tage, die in der Datenbank fehlen. |
+| 2024 | 362 von 364 | 2.158,5 / 2.187,8 | 1.938,4 / 1.946,7 | −1,3 % bzw. −0,4 %, erklärbar durch vier fehlende Tage. |
+| 2025 | 346 von 352 | 2.117,3 / 2.228,1 | 1.924,1 / 1.963,5 | −5,0 % bzw. −2,0 %, 19 Kalendertage fehlen in der Datenbank. |
+| 2026 | 316 von 316 bis 12.11. | 2.287,4 / 2.270,6 | 2.063,1 / 1.971,0 | Nicht vergleichbar. Die Datenbank liegt in allen Kanälen über der CSV (PV +120 kWh), der Gesamtbericht deckt also weniger Tage ab. |
+
+Die Jahresbilanz schließt in der Datenbank in jedem Jahr exakt. Für 2023, 2024 und 2025 liegt die Datenbank in jedem Kanal höchstens auf Höhe der CSV-Summe, was zu den fehlenden Tagen passt.
+
+**Wirkung.**
+- Seit Datenbeginn sind 331 von 23.585 kWh Hausverbrauch (1,4 %) nicht trennbar, vorher waren es mehr als die Hälfte.
+- 2024: 2.375,6 kWh direkt aus PV, 1.938,4 kWh aus dem Speicher, 2.428,6 kWh aus dem Netz, 47,9 kWh nicht trennbar.
+
+**Danach behoben.** Die Energiebilanz zählte Tage vor dem ersten gespeicherten Wert als fehlend, etwa Januar bis Mai 2023 im Jahr 2023. Sie beginnt jetzt am ersten Datentag. Ein Unit-Test ist ergänzt.
+
+**Offen.** Mai 2023 vor dem 01.06. ist nicht nachgeladen.
 
 ### Lokale Bereitstellung
 
