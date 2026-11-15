@@ -17,7 +17,10 @@ public static class Observations
 
     public static Observation[] FromDaily(DailyValues[] daily, DateOnly today)
     {
-        var days = daily.Where(d => d.Day < today).ToArray();
+        var flags = DayFlags.Detect(daily);
+        var flagged = flags.Select(f => f.Day).ToHashSet();
+        // Outage and catch-up days carry energy of several days; they must not become records.
+        var days = daily.Where(d => d.Day < today && !flagged.Contains(d.Day)).ToArray();
         var result = new List<Observation>();
         if (days.Where(d => d.Pv.HasValue).MaxBy(d => d.Pv) is { Pv: > 0 } best)
             result.Add(new("pv-max", $"Höchste PV-Erzeugung am {Date(best.Day)} · {Kwh(best.Pv!.Value)}.", best.Day, best.Pv));
@@ -52,6 +55,10 @@ public static class Observations
             decimal share = battery.Sum(d => d.Discharge!.Value) / battery.Sum(d => d.Load!.Value);
             result.Add(new("battery-share", $"Der Speicher deckte an {battery.Length} Tagen mit Batteriewerten {(share * 100).ToString("N0", German)} % des Hausverbrauchs.", null, null));
         }
+        var outages = flags.Where(f => f.Kind == DayFlags.Outage && f.Day < today).ToArray();
+        if (outages.Length > 0)
+            result.Add(new("outage-days", $"{outages.Length} Ausfalltage ohne Werte, deren Energie am Folgetag nachgeliefert wurde " +
+                $"(zuletzt {Date(outages[^1].Day)}). Diese Tage zählen nicht für Höchstwerte.", outages[^1].Day, null));
         return result.ToArray();
     }
 }

@@ -32,5 +32,5 @@ Bereitstellung: Demo auf Port 8080 über Docker Compose (`.local/ci-deploy-demo.
 
 - `.env`, `secrets/`, `.local/` und `data/` (private Sungrow-CSV-Exporte) nie committen oder auslesen, wenn es nicht nötig ist.
 - Keine Schreibzugriffe auf die private Datenbank ohne ausdrückliche Freigabe. Lesende Analysen gehen über `.local/owner-instance/csv-db.ps1 -Sql <datei>`.
-- Ein manueller Nachimport (`Import.cs`) überschreibt Tageswerte desselben Tages mit API-Werten. Hintergrundabgleich und Zählerimporte schreiben nur fehlende Werte (`fillOnly`).
+- Ein manueller Nachimport (`Import.cs`) überschreibt Tageswerte desselben Tages mit API-Werten. Hintergrundabgleich, Zählerimporte und der Batterie-Nachimport aus Mitternachtszählern (`BatteryHistory`, Revision `sungrow-device-counter-day-v1`) schreiben nur fehlende Werte (`fillOnly`).
 - Arbeite auf Feature-Branches, nicht auf `main`.

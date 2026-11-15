@@ -43,6 +43,8 @@ builder.Services.AddSingleton<LiveMonitor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LiveMonitor>());
 builder.Services.AddSingleton<IHistorySource>(sp => sp.GetRequiredService<LiveProvider>());
 builder.Services.AddSingleton<HistoryWorker>();
+builder.Services.AddSingleton<IDeviceCounterSource>(sp => sp.GetRequiredService<LiveProvider>());
+builder.Services.AddSingleton<BatteryHistory>();
 builder.Services.AddSingleton<LanAccess>();
 builder.Services.AddHostedService<ImportWorker>();
 builder.Services.AddSingleton<Jobs>();
@@ -89,7 +91,8 @@ builder.Services.AddRateLimiter(o =>
     void Policy(string name, int count, TimeSpan window) => o.AddPolicy(name, c =>
         RateLimitPartition.GetFixedWindowLimiter(c.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new() { PermitLimit = count, Window = window }));
-    Policy("api", 240, TimeSpan.FromMinutes(1));
+    // One dashboard view issues about ten requests; 600 per minute still bounds a misbehaving client.
+    Policy("api", 600, TimeSpan.FromMinutes(1));
     Policy("login", 8, TimeSpan.FromMinutes(5));
     Policy("simulate", 12, TimeSpan.FromMinutes(1));
 });

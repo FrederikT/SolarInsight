@@ -23,7 +23,13 @@ public static class Endpoints
             bool mapped = plant.ProviderId is not null;
             var connection = mapped ? await db.Connections.AsNoTracking().SingleOrDefaultAsync(c => c.PlantId == plant.Id, ct) : null;
             var mapping = connection is null ? null : JsonSerializer.Deserialize<SungrowMapping>(connection.Capabilities);
+            var firstAggregate = await db.Aggregates.AsNoTracking().Where(a => a.PlantId == plant.Id && a.Origin == "provider")
+                .OrderBy(a => a.Start).Select(a => (DateTimeOffset?)a.Start).FirstOrDefaultAsync(ct);
+            var firstReading = await db.Readings.AsNoTracking().Where(r => r.PlantId == plant.Id)
+                .OrderBy(r => r.Start).Select(r => (DateTimeOffset?)r.Start).FirstOrDefaultAsync(ct);
+            var firstAt = new[] { firstAggregate, firstReading }.Where(x => x.HasValue).Min();
             return new { plant.Name, plant.Zone, plant.Region, plant.Synthetic, devices,
+                firstDay = firstAt is { } at ? Calendar.Day(at, TimeZoneInfo.FindSystemTimeZoneById(plant.Zone)) : (DateOnly?)null,
                 defaultAnchor = plant.Synthetic ? Demo.End.AddDays(-1) :
                     Calendar.Day(DateTimeOffset.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(plant.Zone)),
                 capabilities = new { energy = plant.Synthetic || mapped, timeseries = plant.Synthetic || mapping?.Points.Length > 0,
@@ -53,7 +59,7 @@ public static class Endpoints
             }
             return Results.Ok(new
             {
-                view.Period, zone = view.Zone.Id, view.Hours, view.KnownPaths,
+                view.Period, zone = view.Zone.Id, view.Hours, view.ElapsedHours, view.KnownPaths,
                 latest = view.Rows.Length == 0 ? (DateTimeOffset?)null : view.Rows[^1].End,
                 start = Calendar.Utc(view.Period.Start, view.Zone), end = Calendar.Utc(view.Period.End, view.Zone),
                 flow.Breakdown, flow.Points, storage, balance,

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SolarInsight.Application;
 using SolarInsight.Domain;
 using SolarInsight.Infrastructure;
 using System.Text.Json;
@@ -67,6 +68,22 @@ public static class ProviderEndpoints
             return Results.Ok(await live.ProbeDeviceMinutes(plant, input, HistoryPoints, ct));
         }).RequireRateLimiting("login");
         provider.MapPost("/device-counters/backfill", BackfillCounters).RequireRateLimiting("login");
+        provider.MapGet("/battery-history", (BatteryHistory runner) => new { status = runner.Snapshot(),
+            spacingSeconds = runner.CallSpacingSeconds, previewDays = BatteryHistory.PreviewDays, revision = BatteryCounterDays.Revision });
+        provider.MapPost("/battery-history", async (BatteryHistoryRequest input, BatteryHistory runner, LiveProvider live,
+            Queries queries, Store db, CancellationToken ct) =>
+        {
+            var plant = await queries.Plant(ct);
+            if (!live.Configured) return Results.Problem(statusCode: 409, detail: "Sungrow ist nicht konfiguriert.");
+            var (device, problem) = await BatteryHistory.Device(db, plant, ct);
+            if (device is null) return Results.Problem(statusCode: 409, detail: problem);
+            if (input.Apply && await db.Imports.AnyAsync(j => j.PlantId == plant.Id && (j.Status == "pending" || j.Status == "running"), ct))
+                return Results.Problem(statusCode: 409, detail: "Ein regulärer Import ist aktiv.");
+            var error = runner.Start(plant, device, input);
+            return error is null ? Results.Accepted("/api/v1/provider/battery-history") :
+                Results.Problem(statusCode: runner.Running ? 409 : 400, detail: error);
+        }).RequireRateLimiting("login");
+        provider.MapDelete("/battery-history", (BatteryHistory runner) => runner.Cancel() ? Results.NoContent() : Results.NotFound());
         provider.MapPut("/plant", async (LiveActivation input, LiveProvider live, CancellationToken ct) =>
         {
             await live.Activate(input, ct);

@@ -171,10 +171,17 @@ export function LongTermCharts({ points, periodEnd }: { points: Point[]; periodE
   const years = [...new Set(months.map(m => m.start.slice(0, 4)))]
   if (months.length < 10) return null
   const value = (m: Bucket) => metric === 'autarky' ? ratio(m.load, m.import) : m[metric]
-  const seriesColors = ['#c9d6cd', '#8fb3a0', '#4f8a70', '#185840', '#b67715', '#a8324e']
-  const yearSeries = years.map((year, i) => ({ name: year, type: 'line', connectNulls: false,
-    itemStyle: { color: seriesColors[Math.max(0, seriesColors.length - years.length + i)] },
-    data: monthNames.map((_, month) => { const m = months.find(x => x.start.startsWith(year + '-' + String(month + 1).padStart(2, '0'))); return m ? value(m) : null }) }))
+  // The latest year as solid bars next to the lighter year before, older years as dashed lines.
+  const latest = years[years.length - 1], before = years[years.length - 2]
+  const valuesOf = (year: string) => monthNames.map((_, month) => {
+    const m = months.find(x => x.start.startsWith(year + '-' + String(month + 1).padStart(2, '0'))); return m ? value(m) : null })
+  const tone = metric === 'pv' ? flowColors.pv : metric === 'load' ? flowColors.load : metric === 'import' ? flowColors.grid : flowColors.export
+  const yearSeries = [
+    ...(before ? [{ name: before, type: 'bar', barGap: '8%', data: valuesOf(before), itemStyle: { color: tone, opacity: .35 } }] : []),
+    { name: latest, type: 'bar', data: valuesOf(latest), itemStyle: { color: tone } },
+    ...years.slice(0, -2).map(year => ({ name: year, type: 'line', data: valuesOf(year), showSymbol: false,
+      lineStyle: { width: 1.5, type: 'dashed' }, itemStyle: { color: '#8d9a92' } })),
+  ]
   const perDay = (season: readonly number[], key: 'pv' | 'load' | 'import' | 'export') => {
     const selected = months.filter(m => season.includes(parse(m.start).getUTCMonth()) && m[key] != null)
     const days = selected.reduce((a, m) => a + m.days, 0)
@@ -187,7 +194,7 @@ export function LongTermCharts({ points, periodEnd }: { points: Point[]; periodE
       {Object.entries(labels).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
     <Chart label="Monatswerte je Jahr" option={options(monthNames, yearSeries,
       metric === 'autarky' ? { type: 'value', name: '%', min: 0, max: 100 } : { type: 'value', name: 'kWh' })} />
-    <p><small>Jede Linie ist ein Kalenderjahr. Laufende oder unvollständige Monate liegen niedriger, ohne dass weniger erzeugt wurde.</small></p>
+    <p><small>Kräftige Balken: {latest}{before ? ', helle Balken daneben: ' + before : ''}{years.length > 2 ? ', gestrichelte Linien: frühere Jahre' : ''}. Laufende oder unvollständige Monate liegen niedriger, ohne dass weniger erzeugt wurde.</small></p>
     <h3>Jahreszeiten im Mittel pro Tag</h3>
     <Chart label="Tagesmittel je Jahreszeit" option={options(seasons.map(s => s[0]), [
       { name: 'PV-Erzeugung', type: 'bar', itemStyle: { color: flowColors.pv }, data: seasons.map(s => perDay(s[1], 'pv')) },

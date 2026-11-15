@@ -180,6 +180,57 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 
 ## DATA-05 · Datenqualität sichtbar machen und Batterie-Tageswerte nachladen
 
-**Status:** Teilweise erledigt. Übersicht und Dokumentation sind umgesetzt. Offen ist der API-Testimport eines Monats vor August 2026. Er klärt, ob iSolarCloud Batterie-Tageswerte rückwirkend liefert. Das erfordert eine Freigabe des Betreibers und eine Sicherung vorab. [Übersicht](data-availability.md).
+**Status:** Erledigt. Übersicht und Dokumentation sind umgesetzt. Lesende Proben vom 14. November 2026 belegen: Die Tagesroute liefert die Batteriepunkte 83322 und 83323 für 2023 und 2024 nicht, die Gerätehistorie liefert dagegen Batteriezähler und SOC ab Juni 2023. Der Nachimport folgt unter DATA-06. [Übersicht](data-availability.md).
 
-**Abnahme.** Der Datenstatus zeigt je Monat und Messgröße vorhandene Tageswerte, vollständige Intervalle und SOC-Stichproben sowie Lücken und Quellen. Für jede Lückenart ist der Nachimportweg mit seinem Risiko für bestehende Daten beschrieben. Nach einem Testimport ist dokumentiert, ob die Batterie-Tageswerte rückwirkend verfügbar sind.
+**Abnahme.** Der Datenstatus zeigt je Monat und Messgröße vorhandene Tageswerte, vollständige Intervalle und SOC-Stichproben sowie Lücken und Quellen. Für jede Lückenart ist der Nachimportweg mit seinem Risiko für bestehende Daten beschrieben. Es ist dokumentiert, ob die Batterie-Tageswerte rückwirkend verfügbar sind.
+
+## DATA-06 · Historische Batterie-Tageswerte aus Gerätezählern nachladen
+
+**Status:** Erledigt. Auf der privaten Datenbank ausgeführt: 1.131 von 1.157 Tagen ergänzt, Abgleich mit den CSV-Jahressummen dokumentiert. [Nachweis](implementation-status.md#data-06--batterie-tageswerte-aus-gerätezählern).
+
+**Hintergrund.** Vor August 2026 fehlen Batterieladung und -entladung als Tageswert. Energieflüsse zeigen dort „PV direkt oder Speicher (nicht trennbar)“. Die Gerätehistorie liefert die Gesamtzähler 13034 (Batterieladung) und 13035 (Batterieentladung) sowie PV, Last, Bezug, Einspeisung und SOC mindestens ab dem 01.06.2023. Der bestehende Gerätezähler-Nachimport schreibt historische Tage nicht, weil er vorhandene Sungrow-Tageswerte für alle sechs Kanäle voraussetzt.
+
+**Abnahme.**
+- Ein Hintergrundauftrag liest je Kalendertag den Zählerstand um 00:00 Uhr Ortszeit (ein Aufruf pro Tag, Aufrufabstand wie konfiguriert) und bildet daraus Tageswerte für Ladung und Entladung.
+- Ein Tag wird nur übernommen, wenn beide Mitternachtsstände vorliegen, die Zähler nicht rückläufig sind und die Zählerdifferenzen für PV, Last, Bezug und Einspeisung höchstens 0,2 kWh von den gespeicherten Tageswerten abweichen.
+- Der Auftrag ergänzt nur fehlende Werte (`fillOnly`) unter einer eigenen Quellenrevision. Er ist abbrechbar, setzt am Prüfpunkt fort und hat eine Vorschau ohne Schreiben.
+- Vor dem ersten Schreiblauf auf der privaten Datenbank gibt es eine Sicherung und die Freigabe des Betreibers.
+- Optional: 15-Minuten-Intervalle mit SOC für gewählte Zeiträume über dieselbe Quelle, mit ausgewiesenem Aufrufbedarf.
+
+## UX-11 · Oberfläche modernisieren, Energiefluss und Kalender
+
+**Status:** Umgesetzt und mit der Demo geprüft. Die Prüfung mit privaten Daten im Browser steht aus. [Nachweis](implementation-status.md#ux-11-cost-01-bat-02-und-data-07--oberfläche-kosten-und-speicherzustand).
+
+**Abnahme.**
+- Kennzahlen stehen als Kacheln mit Symbol, Farbe je Größe, Vorjahresvergleich und Erklärung auf Abruf.
+- Datenhinweise, die immer zutreffen, stehen nicht mehr als Warnung über den Kennzahlen.
+- Die Zeitraumleiste bleibt beim Scrollen sichtbar. Die Jahresauswahl zeigt nur Jahre mit Daten.
+- Helles und dunkles Farbschema, auch für die Diagramme, wählbar oder nach Systemeinstellung.
+- Ein Energiefluss-Diagramm zeigt PV, Netzbezug, Speicher, Hausverbrauch und Einspeisung ohne erfundene Aufteilung.
+- Ein Kalender zeigt je Tag Autarkie, PV-Ertrag, Netzbezug oder Speicherentladung. Tage ohne Werte sind leer, Ausfall- und Nachholtage markiert, ein Klick öffnet den Tag.
+- Der Monatsvergleich zeigt das letzte Jahr als Balken neben dem Vorjahr.
+- Alle Ansichten passen bei 375 Pixel Breite.
+
+## COST-01 · Stromkosten und Ersparnis
+
+**Status:** Umgesetzt und mit der Demo geprüft. Für die private Anlage fehlen die Tarife des Betreibers.
+
+**Abnahme.** Mit hinterlegten Tarifen zeigt die Kostenansicht je Monat Netzbezug, Grundpreis und Einspeiseerlös, die Nettokosten und die kumulierte Ersparnis. Die Ersparnis vergleicht mit denselben Preisen den Fall ohne Anlage (gesamter Verbrauch aus dem Netz) und ohne Speicher (Entladung als Bezug, Ladung als Einspeisung). Tage ohne gültigen Bezugspreis werden ausgewiesen und nicht bepreist. Ohne Tarife führt die Ansicht zur Tariferfassung.
+
+## BAT-02 · Speicherzustand über die Jahre
+
+**Status:** Umgesetzt und mit der Demo geprüft.
+
+**Abnahme.** Für alle Tage mit Batteriewerten zeigt die Seite „Speicher & Potenzial“ je Jahr Ladung, Entladung, Wirkungsgrad, Vollzyklen, Tage mit voller Ladung und den Anteil am Hausverbrauch. Je Monat stehen die mittlere Entladung pro Tag im Jahresvergleich und der Wirkungsgrad. Feststellungen werden in Sätzen formuliert. Ausfall- und Nachholtage sind ausgeschlossen. Eine Kapazitätsabnahme wird nicht behauptet, solange nur Tageswerte vorliegen.
+
+## DATA-07 · Ausfall- und Nachholtage kennzeichnen
+
+**Status:** Umgesetzt.
+
+**Abnahme.** Ein Tag mit 0 kWh Hausverbrauch gilt als Ausfalltag, der Folgetag als Nachholtag. Beide zählen nicht für Höchstwerte und nicht für den Speicherzustand und sind im Kalender markiert. Die Summen über mehrere Tage bleiben unverändert.
+
+## DATA-08 · Referenzmonate mit 15-Minuten-Werten nachladen
+
+**Status:** Offen.
+
+**Abnahme.** Für einen gewählten Monat werden 15-Minuten-Werte aller Kanäle und der Ladezustand aus der Gerätehistorie nachgeladen. Es werden nur fehlende Werte ergänzt, mit Vorschau und Freigabe. Damit werden Tagesprofile nach Uhrzeit (Sommer und Winter), Ladegrenzen und eine Kapazitätsschätzung je Jahr möglich.

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { EnergyInsights } from './EnergyInsights'
 import { base, useData, type EnergyEvent, type Job, type Point, type Report } from './api'
-import { bounds, Chart, chartOptions, date, eventBounds, localDay, number, Panel, pct, power, stamp, Status } from './components'
+import { bounds, change, Chart, chartOptions, date, eventBounds, localDay, number, Panel, pct, power, stamp, Status, Tile, tones } from './components'
+import { Costs, YearCalendar } from './Visuals'
 import { TodayTimeline } from './LiveView'
 import { LongTermCharts, PeriodHistory } from './PeriodCharts'
 import type { Metrics } from './api'
@@ -13,16 +14,18 @@ const energy = ['pv', 'load', 'import', 'export'] as const
 const storage = ['charge', 'discharge', 'soc'] as const
 const keys = [...energy, ...storage]
 
-export function Overview({ query, drill, day, evidence, simulation, version, liveVersion }: {
+export function Overview({ query, drill, day, evidence, simulation, version, liveVersion, openSettings }: {
   query: string; drill: (day: string, exclusive?: string | null) => void; day: string | null; evidence: boolean;
-  simulation: string | null; version: number; liveVersion: number
+  simulation: string | null; version: number; liveVersion: number; openSettings: () => void
 }) {
   const [perspective, setPerspective] = useState('energy')
-  const [compare, setCompare] = useState('')
+  const [compare, setCompare] = useState('year')
   const [model, setModel] = useState(false)
   const [heat, setHeat] = useState('')
   const [intervalSource, setIntervalSource] = useState(false)
-  const path = query + (compare ? '&compare=' + compare : '')
+  // Comparisons only make sense for periods up to a year; "seit Datenbeginn" has no reference period.
+  const longPeriod = /kind=all/.test(query)
+  const path = query + (compare && !longPeriod ? '&compare=' + compare : '')
   const state = useData<{ report: Report; comparison: Report | null; buckets: Point[]; providerBuckets?: Point[] | null }>('/overview?' + path, version)
   const events = useData<{ events: EnergyEvent[]; total: number; intervals: number; batteryEstimated: boolean;
     observations: { kind: string; text: string; day: string | null }[] }>('/events?' + query + '&limit=6', version)
@@ -80,16 +83,36 @@ export function Overview({ query, drill, day, evidence, simulation, version, liv
       chartSeries.push({ name: 'Modell · ' + label, type: 'line', yAxisIndex: key === 'soc' ? 1 : 0,
         data: buckets.map(b => { const value = points.get(b.start || '')?.[key]; return value == null ? null : key === 'soc' ? value * 100 : value }) })
   }
-  const kpis = [...energy.map(key => {
+  const previous = comparison?.providerMetrics ?? comparison?.metrics ?? null
+  const compareLabel = compare === 'year' ? 'zum Vorjahr' : 'zur Vorperiode'
+  const kwhValue = (key: typeof energy[number]) => {
     const daily = report.providerMetrics?.[key]
-    const useDaily = daily?.kwh != null && daily.coverage >= m[key].coverage
-    const channel = useDaily ? daily : m[key]
-    return [labels[key], number(channel.kwh) + ' kWh',
-      (useDaily ? 'Sungrow-Tageswerte · ' : '') + 'Abdeckung ' + pct(channel.coverage)]
-  }), ['Autarkiegrad', pct(autarky.value), autarky.detail, autarky.basis != null && autarky.basis < .999 ? 'Basis ' + pct(autarky.basis) + ' des Zeitraums' : ''],
-  ['Eigenverbrauchsquote', pct(retention.value), retention.detail, retention.basis != null && retention.basis < .999 ? 'Basis ' + pct(retention.basis) + ' des Zeitraums' : ''],
-  ['Netto-Stromkosten', number(cost.net ?? (cost.importCoverage > 0 || cost.exportCoverage > 0 || cost.fixed > 0 ? cost.coveredNet : null)) + ' €',
-    cost.complete ? 'Bezug und Grundpreis abzüglich Erlös' : 'Nur gedeckter Teilbetrag']]
+    return daily?.kwh != null && daily.coverage >= m[key].coverage ? daily : m[key]
+  }
+  // A change against an incomplete or running period would be misleading.
+  const comparable = !!comparison && !comparison.incomplete && !report.incomplete && !longPeriod
+  const delta = (key: typeof energy[number], moreIsBetter: boolean) =>
+    comparable ? change(kwhValue(key).kwh, previous?.[key].kwh, moreIsBetter, compareLabel) : null
+  const ratioDelta = (value: number | null, old: number | null | undefined) => comparable ? change(value, old, true, compareLabel, true) : null
+  const basisNote = (basis: number | null) => basis != null && basis < .999 ? 'Basis ' + pct(basis) + ' des Zeitraums' : undefined
+  const coverageNote = (key: typeof energy[number]) => kwhValue(key).coverage < .999 ? 'Abdeckung ' + pct(kwhValue(key).coverage) : undefined
+  const discharge = dailyMetrics?.discharge.kwh ?? m.discharge.kwh
+  const tiles = [
+    { label: 'PV-Erzeugung', value: number(kwhValue('pv').kwh, 0) + ' kWh', icon: 'pv', tone: tones.pv, delta: delta('pv', true), note: coverageNote('pv') },
+    { label: 'Hausverbrauch', value: number(kwhValue('load').kwh, 0) + ' kWh', icon: 'house', tone: tones.house, delta: delta('load', false), note: coverageNote('load') },
+    { label: 'Netzbezug', value: number(kwhValue('import').kwh, 0) + ' kWh', icon: 'grid', tone: tones.grid, delta: delta('import', false), note: coverageNote('import') },
+    { label: 'Einspeisung', value: number(kwhValue('export').kwh, 0) + ' kWh', icon: 'export', tone: tones.export, delta: null, note: coverageNote('export') },
+    { label: 'Autarkiegrad', value: pct(autarky.value), icon: 'ratio', tone: tones.house, info: autarky.detail,
+      delta: ratioDelta(autarky.value, previous?.autarky), note: autarky.value == null ? 'Keine belastbare Angabe' : basisNote(autarky.basis) },
+    { label: 'Eigenverbrauch', value: pct(retention.value), icon: 'ratio', tone: tones.pv, info: retention.detail,
+      delta: ratioDelta(retention.value, previous?.retention), note: retention.value == null ? 'Keine belastbare Angabe' : basisNote(retention.basis) },
+    ...(discharge != null ? [{ label: 'Aus dem Speicher', value: number(discharge, 0) + ' kWh', icon: 'battery', tone: tones.battery,
+      delta: comparable ? change(discharge, previous?.discharge.kwh, true, compareLabel) : null,
+      note: 'Geladen ' + number(dailyMetrics?.charge.kwh ?? m.charge.kwh, 0) + ' kWh' }] : []),
+    ...(cost.importCoverage > 0 || cost.fixed > 0 ? [{ label: 'Stromkosten netto', icon: 'money', tone: tones.money,
+      value: number(cost.net ?? cost.coveredNet, 0) + ' €', delta: null,
+      note: cost.complete ? undefined : 'Teilbetrag, Tarife oder Werte unvollständig' }] : []),
+  ]
   const intervalCoverage = report.resolutionMinutes == null ? 0 : m.coverage
   const incompleteChannels = keys.filter(key => key === 'soc' ? m.socMean == null : m[key].coverage < .999999)
   const heatPoints = heatmap?.data?.points ?? []
@@ -106,13 +129,14 @@ export function Overview({ query, drill, day, evidence, simulation, version, liv
       <p>{bounds(report.period)} · {report.timeZone}</p></div><a className="button secondary" href={base + '/exports/overview?' + query}>CSV exportieren</a></div>
     {runningDay && !dailyMetrics && <p className="notice">Der Tag läuft noch. Der Verlauf zeigt bereits gespeicherte Leistungsmessungen.
       Tagesenergie und Quoten benötigen Energieintervalle oder Sungrow-Tageswerte. Für Nettokosten sind zusätzlich Tarife erforderlich.</p>}
-    {dailyMetrics && incompleteChannels.length > 0 && <aside className="history-warning" aria-label="Achtung: Lücken im Zeitverlauf">
-      <strong>Achtung: Der Zeitverlauf ist unvollständig</strong>
-      <p>Für {incompleteChannels.map(key => labels[key]).join(', ')} fehlen einzelne oder alle Zeitwerte.
-        Tageswerte können trotzdem vollständig sein. Für die Lücken braucht der Import Messwerte im Zeitraster.</p>
-    </aside>}
     <details className="data-notes"><summary><span aria-hidden="true">ⓘ </span>Hinweise zur Datengrundlage</summary>
-      <ul><li>Gemeinsame Minutenabdeckung: {pct(intervalCoverage)} der Zeit mit PV und Hausverbrauch im selben
+      <ul>{dailyMetrics && incompleteChannels.length > 0 && <li>Im Zeitverlauf fehlen für {incompleteChannels.map(key => labels[key]).join(', ')}
+        einzelne oder alle 15-Minuten-Werte. Die Tageswerte sind davon nicht betroffen.</li>}
+        {report.providerMetrics && <li>Sungrow-Tageswerte im Zeitraum: PV {number(report.providerMetrics.pv.kwh)} kWh · Verbrauch {number(report.providerMetrics.load.kwh)} kWh ·
+          Bezug {number(report.providerMetrics.import.kwh)} kWh · Einspeisung {number(report.providerMetrics.export.kwh)} kWh ·
+          Ladung {number(report.providerMetrics.charge.kwh)} kWh · Entladung {number(report.providerMetrics.discharge.kwh)} kWh.
+          {report.providerExportDifference != null && ' Abweichung beim Export (Tageswert minus Zeitreihe) ' + number(report.providerExportDifference) + ' kWh.'}</li>}
+        <li>Gemeinsame Minutenabdeckung: {pct(intervalCoverage)} der Zeit mit PV und Hausverbrauch im selben
         Messintervall. Sie zeigt, wie viel des Verlaufs sich zeitlich vergleichen lässt.</li>
         {dailyMetrics && <li>Gemeinsame Tagesabdeckung: {pct(dailyMetrics.coverage)} der Tage mit beiden Tagesenergien.
           Das reicht für Tagesvergleiche, auch wenn der Verlauf innerhalb eines Tages Lücken hat.</li>}
@@ -124,22 +148,15 @@ export function Overview({ query, drill, day, evidence, simulation, version, liv
         {dailyMetrics && dailyMetrics.coverage >= .999999 && (report.resolutionMinutes == null || m.coverage < .999999) &&
           <li>PV und Hausverbrauch liegen für alle gewählten Tage als Tageswerte vor. Im Minutenverlauf fehlen gemeinsame Messintervalle.</li>}</ul>
     </details>
-    {report.providerMetrics && <Panel title="Sungrow-Tagesaggregate"><p>PV {number(report.providerMetrics.pv.kwh)} kWh · Verbrauch {number(report.providerMetrics.load.kwh)} kWh · Bezug {number(report.providerMetrics.import.kwh)} kWh · Einspeisung {number(report.providerMetrics.export.kwh)} kWh.</p>
-      <p>Batterieladung {number(report.providerMetrics.charge.kwh)} kWh · Batterieentladung {number(report.providerMetrics.discharge.kwh)} kWh.</p>
-      {report.providerExportDifference != null && <p>Abweichung beim Export, Provider minus Zeitreihe · {number(report.providerExportDifference)} kWh.</p>}</Panel>}
-    <div className="kpis">{kpis.map(([title, value, detail, basis]) => <article key={title}>
-      <div className="kpi-label"><span>{title}</span><details className="kpi-info">
-        <summary aria-label={'Details zu ' + title}>ⓘ</summary><p>{detail}</p>
-      </details></div>
-      <strong>{value}</strong>
-      {value.startsWith('—') ? <small>Keine belastbare Angabe</small> : basis && <small>{basis}</small>}
-    </article>)}</div>
+    <div className="tiles">{tiles.map(t => <Tile key={t.label} {...t} />)}</div>
+    {comparison && !comparable && <p><small>Vergleich {compareLabel} ausgeblendet, weil {report.incomplete ? 'der gewählte Zeitraum noch läuft' :
+      'der Vergleichszeitraum unvollständig ist'}.</small></p>}
     <Panel title={singleDay ? 'Gemessener Tagesverlauf' : 'Verlauf im Zeitraum'}>
       <div className="row">
         {!singleDay && <label>Perspektive<select value={perspective} onChange={e => setPerspective(e.target.value)}>
           <option value="energy">Energie und Speicher</option><option value="cost">Kosten</option></select></label>}
-        <label>Vergleich<select value={compare} onChange={e => setCompare(e.target.value)}>
-          <option value="">Aus</option><option value="previous">Vorperiode</option><option value="year">Vorjahr</option></select></label>
+        {!longPeriod && <label>Vergleich<select value={compare} onChange={e => setCompare(e.target.value)}>
+          <option value="">Aus</option><option value="previous">Vorperiode</option><option value="year">Vorjahr</option></select></label>}
         {day && simulation && <label className="check"><input type="checkbox" checked={model} onChange={e => setModel(e.target.checked)} /> Szenario einblenden</label>}
         {!singleDay && perspective !== 'cost' && !!providerBuckets?.length && <label>Datenquelle<select value={intervalSource ? 'intervals' : 'daily'}
           onChange={event => setIntervalSource(event.target.value === 'intervals')}>
@@ -154,7 +171,8 @@ export function Overview({ query, drill, day, evidence, simulation, version, liv
           .map(key => labels[key] + ' ' + number(m[key].kwh) + ' kWh').join(' · ') ||
           'Für den laufenden Tag liegen noch keine belegten Energieintervalle vor.'}</p>
       </>}
-      {!singleDay && perspective === 'energy' ? <PeriodHistory points={buckets} periodEnd={report.period.end} drill={drill} /> : <>
+      {!singleDay && perspective === 'cost' ? <Costs query={query} openSettings={openSettings} /> :
+        !singleDay && perspective === 'energy' ? <PeriodHistory points={buckets} periodEnd={report.period.end} drill={drill} /> : <>
       {!runningDay && missingSeries.length > 0 && <p>Keine Werte im Verlauf für {missingSeries.map(key => labels[key]).join(', ')}.</p>}
       {(!runningDay || model) && (chartSeries.some(series => series.data.some(value => value != null))
         ? <Chart label={singleDay ? 'Tagesverlauf mit Leistung und Ladezustand' : 'Energieverlauf'} option={chartOptions(chartNames, unit, chartSeries, singleDay)}
@@ -163,14 +181,15 @@ export function Overview({ query, drill, day, evidence, simulation, version, liv
             'Für diese Ansicht liegen im gewählten Zeitraum keine Daten vor.'} />)}</>}
       {comparison && <p>Vergleich {bounds(comparison.period)} · Netzbezug {number(comparison.metrics.import.kwh)} kWh · Einspeisung {number(comparison.metrics.export.kwh)} kWh · Netto {number(comparison.cost.net)} €{comparison.incomplete ? ' · laufend' : ''}{comparison.metrics.coverage < .999 ? ' · Teildaten' : ''}</p>}
       {m.socMean != null && <p>Ladezustand im Zeitraum · zeitgewichtet {pct(m.socMean)} · Minimum {pct(m.socMin)} · Maximum {pct(m.socMax)}.</p>}
-      {perspective === 'cost' && <p>Bezug {number(cost.import)} € · Grundpreis {number(cost.fixed)} € · Erlös {number(cost.export)} € · Tarif-/Datenabdeckung Bezug {pct(cost.importCoverage)}, Export {pct(cost.exportCoverage)}</p>}
-      {(singleDay || perspective !== 'energy') && <details><summary>{runningDay ? 'Historische Intervalle als Tabelle' : 'Diagrammdaten als Tabelle'}</summary><div className="table"><table><thead><tr><th>Zeit</th>{seriesKeys.map(key => <th key={key}>{labels[key]}{singleDay && key !== 'soc' ? '' : ' (' + (key === 'soc' ? '%' : unit) + ')'}</th>)}</tr></thead>
+      {singleDay && <details><summary>{runningDay ? 'Historische Intervalle als Tabelle' : 'Diagrammdaten als Tabelle'}</summary><div className="table"><table><thead><tr><th>Zeit</th>{seriesKeys.map(key => <th key={key}>{labels[key]}{singleDay && key !== 'soc' ? '' : ' (' + (key === 'soc' ? '%' : unit) + ')'}</th>)}</tr></thead>
         <tbody>{buckets.map((p, i) => <tr key={p.start || p.day || i}><td>{p.day ? <button className="link" onClick={() => drill(p.day!)}>{date(p.day)}</button> : p.local}</td>
           {seriesKeys.map(key => <td key={key}>{key === 'soc' ? pct(p.soc) :
             singleDay && p[key] != null ? power(p[key]!) : number(p[key])}</td>)}</tr>)}</tbody></table></div></details>}
       {!singleDay && Date.parse(report.period.end) - Date.parse(report.period.start) >= 300 * 86_400_000 &&
         <LongTermCharts points={providerBuckets?.length ? providerBuckets : state.data.buckets} periodEnd={report.period.end} />}
     </Panel>
+    {!singleDay && Date.parse(report.period.end) - Date.parse(report.period.start) >= 28 * 86_400_000 &&
+      <Panel title="Kalender"><YearCalendar query={query} drill={drill} /></Panel>}
     {!!report.counterGaps?.length && <Panel title="Zählerenergie über Messlücken">
       <p>Die Summe gilt für das gesamte Zeitfenster und bleibt getrennt vom Viertelstundenprofil und dessen Energiesummen.</p>
       <details><summary>{report.counterGaps.length} belegte Zeitfenster anzeigen</summary><ul>

@@ -1,4 +1,5 @@
 import { useData } from './api'
+import { BatteryBackfill } from './BatteryBackfill'
 import { date, number, Panel, Status } from './components'
 
 type Channel = 'pv' | 'load' | 'import' | 'export' | 'charge' | 'discharge'
@@ -11,7 +12,8 @@ type Quality = { first: string | null; today: string; months: Month[]; socSample
 const names: Record<Channel, string> = { pv: 'PV', load: 'Verbrauch', import: 'Bezug', export: 'Einspeisung', charge: 'Ladung', discharge: 'Entladung' }
 const channels = Object.keys(names) as Channel[]
 const sources: Record<string, string> = { 'sungrow-day-2': 'iSolarCloud-API (Tageswerte)', 'sungrow-portal-csv-day-v1': 'Portal-CSV-Export (Tageswerte)',
-  'sungrow-device-counters-v1': 'Gerätezähler (15 Minuten)', 'sungrow-minutes-v1': 'Minutenwerte aus Momentanleistung' }
+  'sungrow-device-counters-v1': 'Gerätezähler (15 Minuten)', 'sungrow-minutes-v1': 'Minutenwerte aus Momentanleistung',
+  'sungrow-device-counter-day-v1': 'Gerätezähler um Mitternacht (Tageswerte)' }
 const shade = (share: number) => share >= .999 ? '#d7ecdf' : share > 0 ? '#fbeec8' : '#f6d9d6'
 
 /** Monthly availability per channel plus re-import guidance, so gaps are visible before they distort analyses. */
@@ -41,13 +43,13 @@ export function DataQuality() {
         date(g.start) + '–' + date(new Date(Date.parse(g.end) - 86_400_000).toISOString())).join(', ') + (gaps.length > 12 ? ' …' : '') : 'vollständig'}</li>
     })}</ul></details>
     <details><summary>Nachimport fehlender Werte</summary><ul>
-      <li>Fehlende Tageswerte eines Zeitraums lassen sich unter „Nachimport und Testimport“ erneut bei iSolarCloud abfragen. Die API liefert
-        alle sechs Tageswerte einschließlich Batterieladung und -entladung, soweit iSolarCloud sie für den Tag gespeichert hat. Ein manueller Nachimport
-        ersetzt vorhandene Tageswerte desselben Tages durch die API-Werte; Duplikate entstehen nicht, weil Messgröße und Tag eindeutig sind.</li>
-      <li>Batterie-Tageswerte vor August 2026 fehlen bisher. Sie stehen nicht in den Portal-Jahresberichten. Ein API-Nachimport für einen kurzen
-        Testzeitraum zeigt, ob iSolarCloud sie rückwirkend liefert. Die Portal-Tagesberichte enthalten Ladung und Entladung im 30-Minuten-Raster.</li>
+      <li>Fehlende Tageswerte eines Zeitraums lassen sich unter „Nachimport und Testimport“ erneut bei iSolarCloud abfragen. Ein manueller Nachimport
+        ersetzt vorhandene Tageswerte desselben Tages durch die API-Werte. Duplikate entstehen nicht, weil Messgröße und Tag eindeutig sind.</li>
+      <li>Batterie-Tageswerte vor August 2026 liefert die Tagesroute der API nicht (geprüft für 2023 und 2024). Ein erneuter API-Nachimport ergänzt sie
+        deshalb nicht. Der Weg ist der Nachimport aus den Gerätezählern oben. Die Portal-Monats- und -Jahresberichte enthalten keine Batteriespalten.</li>
       <li>Der Hintergrundabgleich und der Gerätezählerimport ergänzen nur fehlende Werte und überschreiben keine vorhandenen.</li>
       <li>Ladezustand und 15-Minuten-Intervalle mit allen Kanälen kommen aus dem Gerätezählerimport. Ältere Zeiträume brauchen einen gezielten Zähler-Nachimport.</li>
     </ul></details>
+    <BatteryBackfill />
   </Panel>
 }

@@ -46,6 +46,37 @@ public static class AnalyticsEndpoints
             };
         });
 
+        api.MapGet("/daily", async ([AsParameters] ViewPeriod query, Queries q, CancellationToken ct) =>
+        {
+            var plant = await q.Plant(ct);
+            var view = await q.Read(plant, await q.PeriodFor(plant, query, ct), ct);
+            var daily = view.Daily().Where(d => d.Day >= view.Period.Start && d.Day < view.Period.End && d.Day < view.Today).ToArray();
+            var flags = DayFlags.Detect(view.Daily()).ToDictionary(f => f.Day, f => f.Kind);
+            return new
+            {
+                view.Period,
+                days = daily.Select(d => new { day = d.Day, d.Pv, d.Load, d.Import, d.Export, d.Charge, d.Discharge,
+                    autarky = d.Load is > 0 && d.Import is >= 0 ? (d.Load - d.Import) / d.Load : null,
+                    flag = flags.GetValueOrDefault(d.Day) })
+            };
+        });
+
+        api.MapGet("/economics", async ([AsParameters] ViewPeriod query, Queries q, CancellationToken ct) =>
+        {
+            var plant = await q.Plant(ct);
+            var view = await q.Read(plant, await q.PeriodFor(plant, query, ct), ct);
+            var daily = view.Daily().Where(d => d.Day >= view.Period.Start && d.Day < view.Period.End).ToArray();
+            return new { view.Period, result = Economics.Evaluate(daily, view.Tariffs, view.Today) };
+        });
+
+        api.MapGet("/battery-health", async (Queries q, CancellationToken ct) =>
+        {
+            var plant = await q.Plant(ct);
+            var view = await q.Read(plant, await q.PeriodFor(plant, new ViewPeriod("all"), ct), ct);
+            decimal? capacity = view.Battery is { } configured ? configured.Usable : view.Estimate?.Battery.Usable;
+            return new { result = BatteryHealth.Evaluate(view.Daily(), capacity, view.Battery is null, view.Today) };
+        });
+
         api.MapGet("/data-quality", async (Queries q, Store store, CancellationToken ct) =>
         {
             var plant = await q.Plant(ct);

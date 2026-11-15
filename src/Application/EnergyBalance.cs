@@ -41,8 +41,11 @@ public static class EnergyBalance
         var production = new Ring();
         decimal gridCharge = 0, batteryExport = 0;
         int count = 0;
+        // Days before the first stored value are outside the data history, not gaps.
+        var firstData = days.Keys.Concat(intervals.Select(g => g.Key)).DefaultIfEmpty(period.Start).Min();
         for (var day = period.Start; day < period.End; day = day.AddDays(1))
         {
+            if (day < firstData) continue;
             // Future days are outside the available data, not missing data.
             if (day > today) break;
             count++;

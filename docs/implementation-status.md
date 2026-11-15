@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10 und POT-02 sind umgesetzt, die Prüfung mit privaten Daten steht aus. DATA-05 ist teilweise erledigt, siehe [Datenverfügbarkeit](data-availability.md). |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist umgesetzt und auf der privaten Datenbank ausgeführt, UX-11, COST-01, BAT-02 und DATA-07 sind umgesetzt, DATA-08 ist offen, siehe [Datenverfügbarkeit](data-availability.md). |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
@@ -387,6 +387,112 @@ Am 13. November 2026 wurde das Projekt von Codex übernommen. Die nicht committe
   - Danach korrigiert: Singular „1 Tag“ in den Grundlagentexten der Kreisdiagramme.
 
 **Bereitstellung.** Demo (Port 8080) per Docker Compose neu gebaut. Docker Desktop war gestoppt und wurde dafür gestartet. Die private Instanz (Port 8081) läuft im neuen Release-Verzeichnis `app-claude-analytics`. `start.ps1` zeigt darauf, die vorherige Fassung liegt als `start.ps1.before-claude-analytics` daneben. Das portable PostgreSQL der privaten Instanz war gestoppt. Es wurde über den bestehenden `pg_ctl`-Weg gestartet und führte eine automatische Wiederherstellung nach unsauberem Herunterfahren durch. Beide Instanzen melden `ready` auf `/health/ready`. Datenbanken, Konfiguration und Zugangsdaten blieben unverändert, auf die private Datenbank wurde nicht geschrieben.
+
+### UX-11, COST-01, BAT-02 und DATA-07 · Oberfläche, Kosten und Speicherzustand
+
+Am 15. November 2026 umgesetzt, in der Reihenfolge Oberfläche, Kosten, Speicherzustand.
+
+**Oberfläche (UX-11).**
+- Farbwerte als Variablen mit hellem und dunklem Schema. Die Kopfzeile hat einen Umschalter System, Dunkel, Hell; die Wahl liegt nur im Browser. Diagramme nutzen im dunklen Schema das dunkle ECharts-Thema.
+- Kennzahl-Kacheln (`Tile`) mit Symbol, Farbe je Größe, Veränderung zum Vorjahr oder zur Vorperiode und Erklärung auf Abruf. Der Vergleich ist voreingestellt auf das Vorjahr. Er wird ausgeblendet, wenn einer der Zeiträume noch läuft oder unvollständig ist, und bei „Seit Datenbeginn“.
+- Der gelbe Hinweis „Zeitverlauf unvollständig“ und der doppelte Block „Sungrow-Tagesaggregate“ stehen jetzt unter „Hinweise zur Datengrundlage“.
+- Die Zeitraumleiste bleibt oben sichtbar. Die Jahresauswahl zeigt nur Jahre ab dem ersten Datentag (`firstDay` in `/plant`).
+- Energiefluss-Diagramm (Sankey) über den Kreisdiagrammen. Tage ohne Batteriewerte fließen über den Knoten „Nicht trennbar“.
+- Kalender (`/daily`) mit Autarkie, PV-Ertrag, Netzbezug und Speicherentladung je Tag, Ausfall- und Nachholtage als Raute, Klick öffnet den Tag.
+- Monatsvergleich: letztes Jahr als Balken neben dem helleren Vorjahr, frühere Jahre gestrichelt.
+- ECharts 6 setzt Legenden standardmäßig nach unten. `Chart` setzt sie wieder nach oben, wo die Diagramme Platz dafür lassen.
+- Die API-Begrenzung steigt von 240 auf 600 Anfragen pro Minute und Adresse. Eine Ansicht lädt jetzt etwa zehn Datensätze; beim Durchklicken von Zeiträumen wurde die alte Grenze erreicht.
+
+**Kosten (COST-01).** `Economics.Evaluate` bepreist jeden Tag mit dem gültigen Tarif und vergleicht mit denselben Preisen ohne Anlage und ohne Speicher. Endpunkt `/economics`, Ansicht unter Perspektive „Kosten“ mit Kacheln, Monatsdiagramm (Bezug, Grundpreis, Erlös negativ, Ersparnis kumuliert) und Tabelle. Ohne Tarife führt ein Knopf zur Tariferfassung. Für die private Anlage sind noch keine Tarife hinterlegt.
+
+**Speicherzustand (BAT-02).** `BatteryHealth.Evaluate` über alle Tage mit Batteriewerten, Endpunkt `/battery-health`, Abschnitt oben auf „Speicher & Potenzial“. Kennzahlen je Jahr und Monat, Feststellungen zu Wirkungsgrad und Winterbetrieb, Rechenweg. Die Kapazität kommt aus den Einstellungen oder der Schätzung (gekennzeichnet).
+
+**Ausfall- und Nachholtage (DATA-07).** `DayFlags.Detect`: Ein Tag mit 0 kWh Hausverbrauch ist ein Ausfall, der Folgetag ein Nachholtag. Beispiel: 18.08.2025 (alle Werte 0) und 19.08.2025 (136,1 kWh PV bei 12 kWp). Beobachtungen nehmen diese Tage nicht als Höchstwert und nennen die Anzahl. Der Speicherzustand schließt sie aus.
+
+**Prüfungen.**
+- 47 Unit-Tests (neu: Ausfall- und Nachholtage, Höchstwerte ohne Nachholtag, Kosten mit beiden Vergleichsfällen, Tage ohne Preis, Speicherzustand) und 42 Integrationstests bestanden.
+- TypeScript und ESLint ohne Fehler.
+- Playwright gegen die Demo: 12 bestanden, 1 übersprungen. Angepasst wurden die Selektoren für die Kacheln, der verschobene Datenhinweis und der Text „bisher vergangenen Stunden“.
+- In der Demo im Browser geprüft (dunkles Schema): Kacheln mit Vorjahresvergleich, Energiefluss, Kalender über drei Jahre, Kostenansicht und Speicherzustand.
+- Demo und private Instanz neu bereitgestellt, beide `ready`. Die Browserprüfung der privaten Instanz steht aus, weil die Anmeldung nach dem Neustart abgelaufen ist.
+
+**Offen.** Tagesprofile nach Uhrzeit für Sommer und Winter brauchen historische 15-Minuten-Werte (DATA-08). Die Speicherkapazität laut Datenblatt ist noch nicht hinterlegt.
+
+### DATA-05 und DATA-06 · Fehlerprüfung und Herkunft historischer Batteriewerte
+
+Am 14. November 2026 folgte eine Prüfung der neuen Auswertungen und der Datenquellen.
+
+**Fehler behoben.**
+- Die Basis der Sungrow-Tageswerte zählte den laufenden Tag als fehlend. Tageswerte gibt es nur für abgeschlossene Tage. Im laufenden November stand deshalb „Basis 93,8 %“, obwohl kein Tag fehlte. Die Basis endet jetzt am Beginn des heutigen Tages (`DataView.CreateReport`).
+- „Gemeinsam bilanzierbar“ setzte die bilanzierbaren Stunden ins Verhältnis zu allen Stunden des Zeitraums, auch den künftigen. Bezug ist jetzt die bisher vergangene Zeit (`elapsedHours` in `/energy-insights`).
+
+**Lesende Proben über die private Instanz.** Es wurde nichts gespeichert.
+- Die Tagesroute (`/provider/probe`) lieferte für den 10.09.2023 und den 15.07.2024 PV, Last, Bezug und Einspeisung. Für die Batteriepunkte 83322 und 83323 kam kein Wert. Ein erneuter API-Tagesimport ergänzt deshalb keine Batteriewerte.
+- Die Gerätehistorie (`/provider/probe/device-minutes`, Gerät `<Geräte-Key>`) lieferte für den 01.06.2023 und den 15.07.2024 alle Gesamtzähler, auch Batterieladung (13034) und -entladung (13035), dazu Momentanleistungen und SOC als Anteil 0–1. Der SOC-Punkt 13141 hat keine Einheit und erscheint in der Diagnose deshalb als `unknown-unit`. Die Werte (0,789 bzw. 1) sind plausibel.
+- Der bestehende Gerätezähler-Nachimport schreibt historische Tage nicht, weil er Sungrow-Tageswerte für alle sechs Kanäle voraussetzt. Ein eigener Tageszähler-Auftrag ist als DATA-06 beschrieben.
+- Die Anlagen-Monats- und -Jahresberichte (CSV) haben keine Batteriespalten. Der Gesamtbericht enthält Jahressummen, deren Bilanz exakt schließt.
+- In der Datenbank stimmt die Netto-Batterieenergie aus der Bilanz (PV + Bezug − Last − Einspeisung) an allen Tagen mit Batteriewerten mit der gemessenen Differenz Ladung − Entladung überein. Für historische Tage ist sie damit bekannt, die Bruttowerte fehlen.
+
+**Prüfungen.** 35 Unit-Tests, 41 Integrationstests, TypeScript, ESLint und Vite-Build ohne Fehler.
+
+### DATA-06 · Batterie-Tageswerte aus Gerätezählern
+
+**Umsetzung.**
+- `BatteryCounterDays.Evaluate` (Application) bildet Tageswerte aus zwei Mitternachtsständen der Gesamtzähler 13134, 13130, 13148, 13125, 13034 und 13035.
+- Ein Tag gilt nur, wenn
+  - beide Stände vollständig vorliegen,
+  - kein Zähler rückläufig ist,
+  - die sechs Kanäle die Bilanz innerhalb der Tagestoleranz schließen,
+  - jeder bereits gespeicherte Tageswert höchstens 0,2 kWh abweicht.
+- `BatteryHistory` (Api) führt den Lauf im Hintergrund aus:
+  - ein Abruf der Gerätehistorie je Mitternacht (Fenster 00:00 bis 01:00 Uhr, 15-Minuten-Raster), über den bestehenden Aufrufabstand. Ein 15-Minuten-Fenster lieferte für Juni 2023 an den meisten Tagen keinen Wert, das Stundenfenster an denselben Tagen schon;
+  - wartet bei Rate-Limits, wiederholt vorübergehende Fehler zweimal und zählt Abrufprobleme;
+  - lässt sich abbrechen.
+- Vorschau: höchstens 31 Tage, schreibt nichts.
+- Übernahme:
+  - schreibt mit `fillOnly` nur fehlende Kanäle als Sungrow-Tageswert mit Revision `sungrow-device-counter-day-v1`;
+  - setzt keinen Prüfpunkt, weil bereits vollständige Tage übersprungen werden; ein erneuter Lauf setzt dadurch fort;
+  - startet nicht, solange ein regulärer Import läuft.
+- Endpunkte: `GET`, `POST` und `DELETE /api/v1/provider/battery-history`, im Demomodus gesperrt.
+- Oberfläche im Datenstatus mit Zeitraum, Abrufschätzung, Vorschau, Bestätigung, Fortschritt und Tagesliste.
+
+**Prüfungen.**
+- Neu: sechs Unit-Tests für die Tagesbewertung und ein Integrationstest (Vorschau ohne Schreiben, Übernahme nur fehlender Werte, unveränderte CSV-Werte, erneuter Lauf ohne Abrufe).
+- Insgesamt 41 Unit- und 42 Integrationstests bestanden. TypeScript und ESLint ohne Fehler.
+- Vorschau auf der privaten Instanz für den 20.08. bis 02.09.2024 (15 Abrufe, nichts gespeichert):
+  - 12 Tage übernehmbar; PV, Last, Bezug und Einspeisung stimmen dort mit den gespeicherten CSV-Tageswerten auf 0,0 kWh überein.
+  - Zusammen 103,5 kWh Ladung und 95,3 kWh Entladung.
+  - Für den 27.08. lieferte die Gerätehistorie um 00:00 Uhr keinen Zählerstand. Dieser Tag und der 26.08. bleiben deshalb offen; der 26.–28.08. ist auch in den CSV-Daten eine Lücke.
+  - Der 28.08. hatte keinen gespeicherten Tageswert und wäre mit allen sechs Kanälen ergänzt worden.
+  - Der erste Vorschaulauf ohne Wiederholungen verlor acht Tage durch einzelne fehlgeschlagene Abrufe. Seitdem werden solche Fehler wiederholt und als Hinweis gezählt.
+
+**Schreiblauf auf der privaten Datenbank (14. November 2026, nach Freigabe).**
+- Vorher gesichert mit `pg_dump`: `before-battery-history-20261114-004735.dump`, 14 Tabellen laut `pg_restore -l`.
+- Erster Anlauf mit 15-Minuten-Fenster: für Juni 2023 fehlten fast alle Mitternachtsstände. Nach sechs Tagen ohne Schreibvorgang abgebrochen und auf ein Stundenfenster umgestellt.
+- Lauf 1 (01.06.2023 bis 31.07.2026, 1.157 offene Tage): 490 Tage übernommen, 667 ohne Zählerstand, keiner verworfen. Einzelabfragen zeigten, dass die Werte für einen Teil dieser Tage existieren und die Antworten nur zufällig leer waren.
+- Leere Antworten werden seitdem nach 30 s einmal wiederholt.
+- Lauf 2 (dieselben Grenzen, nur die 667 offenen Tage): 641 Tage übernommen, 3 verworfen, 23 ohne Zählerstand. Zusammen 1.331 Werte geschrieben. 333 Antworten waren beim ersten Versuch leer.
+- Verworfen wurden der 03.07., 08.07. und 14.08.2023: Dort weichen PV bzw. Einspeisung der Zähler um mehr als 0,2 kWh von den gespeicherten CSV-Tageswerten ab.
+- Ohne Zählerstand blieben unter anderem der 27./28.06. und 26./27.08.2024 sowie mehrere Tage im April, Mai, Juli, August und September 2025. Sie decken sich überwiegend mit den bekannten Lücken der CSV-Daten.
+
+**Abgleich mit den Jahressummen des Portal-Gesamtberichts.**
+
+| Jahr | Tage mit Batteriewert | Ladung DB / CSV (kWh) | Entladung DB / CSV (kWh) | Bewertung |
+| --- | --- | --- | --- | --- |
+| 2023 | 211 von 228 | 1.056,2 / 1.150,7 | 938,3 / 987,7 | Die CSV-Summe enthält den 17. bis 31.05. und 17 weitere Tage, die in der Datenbank fehlen. |
+| 2024 | 362 von 364 | 2.158,5 / 2.187,8 | 1.938,4 / 1.946,7 | −1,3 % bzw. −0,4 %, erklärbar durch vier fehlende Tage. |
+| 2025 | 346 von 352 | 2.117,3 / 2.228,1 | 1.924,1 / 1.963,5 | −5,0 % bzw. −2,0 %, 19 Kalendertage fehlen in der Datenbank. |
+| 2026 | 316 von 316 bis 12.11. | 2.287,4 / 2.270,6 | 2.063,1 / 1.971,0 | Nicht vergleichbar. Die Datenbank liegt in allen Kanälen über der CSV (PV +120 kWh), der Gesamtbericht deckt also weniger Tage ab. |
+
+Die Jahresbilanz schließt in der Datenbank in jedem Jahr exakt. Für 2023, 2024 und 2025 liegt die Datenbank in jedem Kanal höchstens auf Höhe der CSV-Summe, was zu den fehlenden Tagen passt.
+
+**Wirkung.**
+- Seit Datenbeginn sind 331 von 23.585 kWh Hausverbrauch (1,4 %) nicht trennbar, vorher waren es mehr als die Hälfte.
+- 2024: 2.375,6 kWh direkt aus PV, 1.938,4 kWh aus dem Speicher, 2.428,6 kWh aus dem Netz, 47,9 kWh nicht trennbar.
+
+**Danach behoben.** Die Energiebilanz zählte Tage vor dem ersten gespeicherten Wert als fehlend, etwa Januar bis Mai 2023 im Jahr 2023. Sie beginnt jetzt am ersten Datentag. Ein Unit-Test ist ergänzt.
+
+**Offen.** Mai 2023 vor dem 01.06. ist nicht nachgeladen.
 
 ### Lokale Bereitstellung
 
