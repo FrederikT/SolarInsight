@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useData } from './api'
 import { bounds, Chart, chartOptions, date, localDay, number, Panel, pct, power, stamp, Status } from './components'
+import { EnergyFlow } from './Visuals'
 
 type Ring = { total: number; direct: number; battery: number; grid: number; unsplit?: number }
 type Basis = { intervals: number; daily: number; dailyUnsplit: number; running: number; missing: number; rejected: number; missingDays: string[] }
@@ -173,6 +174,11 @@ export function EnergyInsights({ query, version, drill, dailyCoverage }: {
       {breakdown.validHours + breakdown.missingHours + breakdown.rejectedHours < elapsed - .01 && <p>Für weitere Stunden fehlen Minutenintervalle.
         Die Kreisdiagramme nutzen dort die Sungrow-Tageswerte; Auswertungen nach Uhrzeit brauchen Intervalle.</p>}
     </Panel>
+    {data.balance.household?.total ? <Panel title="Energiefluss im Zeitraum">
+      <p className="lede">Links die Quellen, rechts wohin die Energie ging. Die Breite der Bänder entspricht der Energiemenge.
+        {(data.balance.household.unsplit ?? 0) > .05 && ' „Nicht trennbar“ fasst Tage ohne Batteriewerte zusammen, an denen PV-Direktverbrauch und Speicher nicht getrennt werden können.'}</p>
+      <EnergyFlow balance={data.balance} />
+    </Panel> : null}
     <div className="energy-rings">
       <EnergyRing title="Woher kam mein Haushaltsstrom?" ring={data.balance.household} basis={data.balance.householdBasis}
         labels={['Direkt aus PV', 'Aus dem Speicher', 'Aus dem Netz', 'PV direkt oder Speicher (nicht trennbar)']}><Origin balance={data.balance} /></EnergyRing>

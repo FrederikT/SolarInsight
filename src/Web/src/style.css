@@ -28,3 +28,58 @@ label{display:grid;gap:.3rem;font-size:.93rem;font-weight:620}input,select{max-w
 .kpi-info summary::-webkit-details-marker { display: none; }
 .kpi-info p { grid-column: 1 / -1; margin: 0; font-size: .85rem; }
 progress { width: min(100%, 32rem); height: 1rem; }
+
+/* ---- Design tokens, light and dark ---- */
+:root{--bg:#f3f6f1;--surface:#fff;--surface-2:#edf3ee;--ink:#173c30;--text:#172b24;--muted:#52645b;--line:#d9e3da;--green:#185840;
+  --accent:#ffcd73;--pv:#e3a33a;--house:#165eaa;--grid:#a8324e;--battery:#6d4dac;--export:#008269;--shadow:0 1px 2px rgba(20,50,40,.06),0 4px 14px rgba(20,50,40,.05);
+  color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1714;--surface:#16211d;--surface-2:#1d2b26;--ink:#e3efe8;--text:#d7e4dc;
+  --muted:#9db1a6;--line:#2c3d36;--green:#3d9a74;--shadow:none;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1714;--surface:#16211d;--surface-2:#1d2b26;--ink:#e3efe8;--text:#d7e4dc;--muted:#9db1a6;--line:#2c3d36;--green:#3d9a74;--shadow:none;color-scheme:dark}
+:root{background:var(--bg);color:var(--text)}
+body{background:var(--bg)}
+nav,nav button{background:var(--surface);color:var(--ink)}
+.kpis article,.panel,input,select{background:var(--surface);color:var(--text)}
+.panel{box-shadow:var(--shadow)}
+thead,.facts div{background:var(--surface-2)}
+.period{background:var(--surface-2)}
+.secondary{background:var(--surface);color:var(--ink)}
+a,.link{color:var(--green)}
+h1,h2,h3{color:var(--ink)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .notice{background:#3a3016;border-color:#6b5a26;color:#f1e3bc}
+  :root:not([data-theme="light"]) .notice.error{background:#3d1d1b;border-color:#7a3a35;color:#f5c9c4}}
+
+/* ---- Sticky period bar ---- */
+.period{position:sticky;top:0;z-index:5;backdrop-filter:blur(6px);box-shadow:var(--shadow)}
+
+/* ---- KPI tiles ---- */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:12px;margin-bottom:1.2rem}
+.tile{position:relative;display:grid;gap:.15rem;padding:1rem 1rem .85rem;border:1px solid var(--line);border-radius:14px;background:var(--surface);
+  box-shadow:var(--shadow);overflow:hidden;min-width:0}
+.tile::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--tone,var(--green))}
+.tile-head{display:flex;align-items:center;gap:.45rem;color:var(--muted);font-size:.86rem;font-weight:620}
+.tile-head svg{width:1.15rem;height:1.15rem;flex:none;color:var(--tone,var(--green))}
+.tile strong{font-size:clamp(1.35rem,2.4vw,1.75rem);letter-spacing:-.03em;color:var(--ink);line-height:1.2;font-variant-numeric:tabular-nums}
+.tile .delta{font-size:.82rem;font-weight:650}
+.tile .delta.up{color:#1d7a52}.tile .delta.down{color:#b23a3a}.tile .delta.flat{color:var(--muted)}
+.tile small{font-size:.78rem}
+.tile .info{position:absolute;top:.55rem;right:.6rem}
+.tile .info summary{list-style:none;margin:0;color:var(--muted);cursor:pointer}
+.tile .info summary::-webkit-details-marker{display:none}
+.tile .info[open] p{position:absolute;right:0;top:1.6rem;z-index:3;width:min(80vw,280px);padding:.6rem .7rem;border:1px solid var(--line);
+  border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(0,0,0,.16);font-size:.84rem;color:var(--text)}
+.kpis article{overflow-wrap:normal;hyphens:auto}
+
+/* ---- Segmented control and misc ---- */
+.segmented{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface)}
+.segmented button{border-radius:0;background:transparent;color:var(--ink);border:0;border-right:1px solid var(--line);padding:.38rem .7rem;font-weight:600}
+.segmented button:last-child{border-right:0}
+.segmented button[aria-pressed="true"]{background:var(--green);color:#fff}
+.chart.tall{height:420px}.chart.calendar{height:auto;min-height:190px}
+.lede{color:var(--muted);max-width:75ch}
+.legend-list{display:flex;flex-wrap:wrap;gap:.4rem 1rem;list-style:none;padding:0;margin:.4rem 0 0;font-size:.9rem}
+.findings{padding-left:1.1rem}.findings li{margin-bottom:.35rem}
+.header-inner .theme{background:transparent;border:1px solid rgba(255,255,255,.35);color:#fff;padding:.35rem .6rem}
+@media(max-width:600px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile strong{font-size:1.2rem}.period{position:static}}
+.tile-head{padding-right:1.5rem}
+.tile strong,.tile small,.tile .delta,.tile-head span{overflow-wrap:anywhere;min-width:0}

@@ -196,3 +196,41 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 - Der Auftrag ergänzt nur fehlende Werte (`fillOnly`) unter einer eigenen Quellenrevision. Er ist abbrechbar, setzt am Prüfpunkt fort und hat eine Vorschau ohne Schreiben.
 - Vor dem ersten Schreiblauf auf der privaten Datenbank gibt es eine Sicherung und die Freigabe des Betreibers.
 - Optional: 15-Minuten-Intervalle mit SOC für gewählte Zeiträume über dieselbe Quelle, mit ausgewiesenem Aufrufbedarf.
+
+## UX-11 · Oberfläche modernisieren, Energiefluss und Kalender
+
+**Status:** Umgesetzt und mit der Demo geprüft. Die Prüfung mit privaten Daten im Browser steht aus. [Nachweis](implementation-status.md#ux-11-cost-01-bat-02-und-data-07--oberfläche-kosten-und-speicherzustand).
+
+**Abnahme.**
+- Kennzahlen stehen als Kacheln mit Symbol, Farbe je Größe, Vorjahresvergleich und Erklärung auf Abruf.
+- Datenhinweise, die immer zutreffen, stehen nicht mehr als Warnung über den Kennzahlen.
+- Die Zeitraumleiste bleibt beim Scrollen sichtbar. Die Jahresauswahl zeigt nur Jahre mit Daten.
+- Helles und dunkles Farbschema, auch für die Diagramme, wählbar oder nach Systemeinstellung.
+- Ein Energiefluss-Diagramm zeigt PV, Netzbezug, Speicher, Hausverbrauch und Einspeisung ohne erfundene Aufteilung.
+- Ein Kalender zeigt je Tag Autarkie, PV-Ertrag, Netzbezug oder Speicherentladung. Tage ohne Werte sind leer, Ausfall- und Nachholtage markiert, ein Klick öffnet den Tag.
+- Der Monatsvergleich zeigt das letzte Jahr als Balken neben dem Vorjahr.
+- Alle Ansichten passen bei 375 Pixel Breite.
+
+## COST-01 · Stromkosten und Ersparnis
+
+**Status:** Umgesetzt und mit der Demo geprüft. Für die private Anlage fehlen die Tarife des Betreibers.
+
+**Abnahme.** Mit hinterlegten Tarifen zeigt die Kostenansicht je Monat Netzbezug, Grundpreis und Einspeiseerlös, die Nettokosten und die kumulierte Ersparnis. Die Ersparnis vergleicht mit denselben Preisen den Fall ohne Anlage (gesamter Verbrauch aus dem Netz) und ohne Speicher (Entladung als Bezug, Ladung als Einspeisung). Tage ohne gültigen Bezugspreis werden ausgewiesen und nicht bepreist. Ohne Tarife führt die Ansicht zur Tariferfassung.
+
+## BAT-02 · Speicherzustand über die Jahre
+
+**Status:** Umgesetzt und mit der Demo geprüft.
+
+**Abnahme.** Für alle Tage mit Batteriewerten zeigt die Seite „Speicher & Potenzial“ je Jahr Ladung, Entladung, Wirkungsgrad, Vollzyklen, Tage mit voller Ladung und den Anteil am Hausverbrauch. Je Monat stehen die mittlere Entladung pro Tag im Jahresvergleich und der Wirkungsgrad. Feststellungen werden in Sätzen formuliert. Ausfall- und Nachholtage sind ausgeschlossen. Eine Kapazitätsabnahme wird nicht behauptet, solange nur Tageswerte vorliegen.
+
+## DATA-07 · Ausfall- und Nachholtage kennzeichnen
+
+**Status:** Umgesetzt.
+
+**Abnahme.** Ein Tag mit 0 kWh Hausverbrauch gilt als Ausfalltag, der Folgetag als Nachholtag. Beide zählen nicht für Höchstwerte und nicht für den Speicherzustand und sind im Kalender markiert. Die Summen über mehrere Tage bleiben unverändert.
+
+## DATA-08 · Referenzmonate mit 15-Minuten-Werten nachladen
+
+**Status:** Offen.
+
+**Abnahme.** Für einen gewählten Monat werden 15-Minuten-Werte aller Kanäle und der Ladezustand aus der Gerätehistorie nachgeladen. Es werden nur fehlende Werte ergänzt, mit Vorschau und Freigabe. Damit werden Tagesprofile nach Uhrzeit (Sommer und Winter), Ladegrenzen und eine Kapazitätsschätzung je Jahr möglich.

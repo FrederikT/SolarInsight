@@ -10,7 +10,9 @@ function monday(year: number) {
 }
 function weeks(year: number) { return Math.round((+monday(year + 1) - +monday(year)) / 604800000) }
 
-export function PeriodFields({ kind, anchor, change }: { kind: string; anchor: string; change: (value: string) => void }) {
+export function PeriodFields({ kind, anchor, change, firstYear }: { kind: string; anchor: string; change: (value: string) => void; firstYear?: number }) {
+  const thisYear = new Date().getUTCFullYear()
+  const from = Math.min(firstYear ?? thisYear - 5, thisYear)
   const current = new Date(anchor + 'T00:00:00Z')
   const month = current.getUTCMonth()
   const thursday = addDays(current, 3 - (current.getUTCDay() + 6) % 7)
@@ -27,7 +29,7 @@ export function PeriodFields({ kind, anchor, change }: { kind: string; anchor: s
   // A calendar year is always evaluated as a whole; a reference date would only be confusing.
   if (kind === 'year') return <>
     <label>Jahr<select aria-label="Jahr" value={year} onChange={e => choose(Number(e.target.value), 0)}>
-      {Array.from({ length: 100 }, (_, i) => 2000 + i).map(y => <option key={y}>{y}</option>)}
+      {yearOptions(from, thisYear, year)}
     </select></label>
     <strong>{year}</strong>
   </>
@@ -36,8 +38,15 @@ export function PeriodFields({ kind, anchor, change }: { kind: string; anchor: s
       {choices.map((choice, i) => <option key={choice} value={i}>{choice}</option>)}
     </select></label>
     <label>{kind === 'week' ? 'ISO-Wochenjahr' : 'Jahr'}<select value={year} onChange={e => choose(Number(e.target.value), index)}>
-      {Array.from({ length: 100 }, (_, i) => 2000 + i).map(y => <option key={y}>{y}</option>)}
+      {yearOptions(from, thisYear, year)}
     </select></label>
     <strong>{title}</strong>
   </>
+}
+
+/** Years with data, plus the selected year if it lies outside (for example via a shared link). */
+function yearOptions(from: number, to: number, selected: number) {
+  const years = Array.from({ length: to - from + 1 }, (_, i) => from + i)
+  if (!years.includes(selected)) years.push(selected)
+  return years.sort((a, b) => a - b).map(y => <option key={y}>{y}</option>)
 }

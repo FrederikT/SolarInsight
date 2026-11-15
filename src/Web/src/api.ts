@@ -33,7 +33,7 @@ export function useData<T>(path: string | null, version = 0) {
 }
 
 export type Period = { start: string; end: string }
-export type Plant = { name: string; zone: string; region: string; synthetic: boolean; defaultAnchor: string; providerStatus: string;
+export type Plant = { name: string; zone: string; firstDay?: string | null; region: string; synthetic: boolean; defaultAnchor: string; providerStatus: string;
   capabilities: { energy: boolean; timeseries: boolean; events: boolean; simulation: boolean }; devices: { model: string; type: string }[] }
 export type Channel = { kwh: number | null; coverage: number }
 export type Metrics = Record<'pv' | 'load' | 'import' | 'export' | 'charge' | 'discharge', Channel> &

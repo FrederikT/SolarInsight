@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist umgesetzt und auf der privaten Datenbank ausgeführt, siehe [Datenverfügbarkeit](data-availability.md). |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist umgesetzt und auf der privaten Datenbank ausgeführt, UX-11, COST-01, BAT-02 und DATA-07 sind umgesetzt, DATA-08 ist offen, siehe [Datenverfügbarkeit](data-availability.md). |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
@@ -387,6 +387,36 @@ Am 13. November 2026 wurde das Projekt von Codex übernommen. Die nicht committe
   - Danach korrigiert: Singular „1 Tag“ in den Grundlagentexten der Kreisdiagramme.
 
 **Bereitstellung.** Demo (Port 8080) per Docker Compose neu gebaut. Docker Desktop war gestoppt und wurde dafür gestartet. Die private Instanz (Port 8081) läuft im neuen Release-Verzeichnis `app-claude-analytics`. `start.ps1` zeigt darauf, die vorherige Fassung liegt als `start.ps1.before-claude-analytics` daneben. Das portable PostgreSQL der privaten Instanz war gestoppt. Es wurde über den bestehenden `pg_ctl`-Weg gestartet und führte eine automatische Wiederherstellung nach unsauberem Herunterfahren durch. Beide Instanzen melden `ready` auf `/health/ready`. Datenbanken, Konfiguration und Zugangsdaten blieben unverändert, auf die private Datenbank wurde nicht geschrieben.
+
+### UX-11, COST-01, BAT-02 und DATA-07 · Oberfläche, Kosten und Speicherzustand
+
+Am 15. November 2026 umgesetzt, in der Reihenfolge Oberfläche, Kosten, Speicherzustand.
+
+**Oberfläche (UX-11).**
+- Farbwerte als Variablen mit hellem und dunklem Schema. Die Kopfzeile hat einen Umschalter System, Dunkel, Hell; die Wahl liegt nur im Browser. Diagramme nutzen im dunklen Schema das dunkle ECharts-Thema.
+- Kennzahl-Kacheln (`Tile`) mit Symbol, Farbe je Größe, Veränderung zum Vorjahr oder zur Vorperiode und Erklärung auf Abruf. Der Vergleich ist voreingestellt auf das Vorjahr. Er wird ausgeblendet, wenn einer der Zeiträume noch läuft oder unvollständig ist, und bei „Seit Datenbeginn“.
+- Der gelbe Hinweis „Zeitverlauf unvollständig“ und der doppelte Block „Sungrow-Tagesaggregate“ stehen jetzt unter „Hinweise zur Datengrundlage“.
+- Die Zeitraumleiste bleibt oben sichtbar. Die Jahresauswahl zeigt nur Jahre ab dem ersten Datentag (`firstDay` in `/plant`).
+- Energiefluss-Diagramm (Sankey) über den Kreisdiagrammen. Tage ohne Batteriewerte fließen über den Knoten „Nicht trennbar“.
+- Kalender (`/daily`) mit Autarkie, PV-Ertrag, Netzbezug und Speicherentladung je Tag, Ausfall- und Nachholtage als Raute, Klick öffnet den Tag.
+- Monatsvergleich: letztes Jahr als Balken neben dem helleren Vorjahr, frühere Jahre gestrichelt.
+- ECharts 6 setzt Legenden standardmäßig nach unten. `Chart` setzt sie wieder nach oben, wo die Diagramme Platz dafür lassen.
+- Die API-Begrenzung steigt von 240 auf 600 Anfragen pro Minute und Adresse. Eine Ansicht lädt jetzt etwa zehn Datensätze; beim Durchklicken von Zeiträumen wurde die alte Grenze erreicht.
+
+**Kosten (COST-01).** `Economics.Evaluate` bepreist jeden Tag mit dem gültigen Tarif und vergleicht mit denselben Preisen ohne Anlage und ohne Speicher. Endpunkt `/economics`, Ansicht unter Perspektive „Kosten“ mit Kacheln, Monatsdiagramm (Bezug, Grundpreis, Erlös negativ, Ersparnis kumuliert) und Tabelle. Ohne Tarife führt ein Knopf zur Tariferfassung. Für die private Anlage sind noch keine Tarife hinterlegt.
+
+**Speicherzustand (BAT-02).** `BatteryHealth.Evaluate` über alle Tage mit Batteriewerten, Endpunkt `/battery-health`, Abschnitt oben auf „Speicher & Potenzial“. Kennzahlen je Jahr und Monat, Feststellungen zu Wirkungsgrad und Winterbetrieb, Rechenweg. Die Kapazität kommt aus den Einstellungen oder der Schätzung (gekennzeichnet).
+
+**Ausfall- und Nachholtage (DATA-07).** `DayFlags.Detect`: Ein Tag mit 0 kWh Hausverbrauch ist ein Ausfall, der Folgetag ein Nachholtag. Beispiel: 18.08.2025 (alle Werte 0) und 19.08.2025 (136,1 kWh PV bei 12 kWp). Beobachtungen nehmen diese Tage nicht als Höchstwert und nennen die Anzahl. Der Speicherzustand schließt sie aus.
+
+**Prüfungen.**
+- 47 Unit-Tests (neu: Ausfall- und Nachholtage, Höchstwerte ohne Nachholtag, Kosten mit beiden Vergleichsfällen, Tage ohne Preis, Speicherzustand) und 42 Integrationstests bestanden.
+- TypeScript und ESLint ohne Fehler.
+- Playwright gegen die Demo: 12 bestanden, 1 übersprungen. Angepasst wurden die Selektoren für die Kacheln, der verschobene Datenhinweis und der Text „bisher vergangenen Stunden“.
+- In der Demo im Browser geprüft (dunkles Schema): Kacheln mit Vorjahresvergleich, Energiefluss, Kalender über drei Jahre, Kostenansicht und Speicherzustand.
+- Demo und private Instanz neu bereitgestellt, beide `ready`. Die Browserprüfung der privaten Instanz steht aus, weil die Anmeldung nach dem Neustart abgelaufen ist.
+
+**Offen.** Tagesprofile nach Uhrzeit für Sommer und Winter brauchen historische 15-Minuten-Werte (DATA-08). Die Speicherkapazität laut Datenblatt ist noch nicht hinterlegt.
 
 ### DATA-05 und DATA-06 · Fehlerprüfung und Herkunft historischer Batteriewerte
 

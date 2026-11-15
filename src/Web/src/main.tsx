@@ -10,6 +10,7 @@ import { connectionLabel, type ProviderStatus } from './ProviderSetup'
 import { LiveView } from './LiveView'
 import { StoragePotential } from './StoragePotential'
 import { DataQuality } from './DataQuality'
+import { BatteryHealth } from './Visuals'
 import './style.css'
 
 const ScenarioEditor = lazy(() => import('./Scenario').then(m => ({ default: m.ScenarioEditor })))
@@ -106,7 +107,7 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
   return <>
     <header><div className="header-inner"><a className="brand" href="/" aria-label="Solar Insight Startseite"><span aria-hidden>☀</span> Solar Insight</a>
       <span className="plant">{plant?.data?.name ?? 'PV-Analyse'}</span>{demo && <span className="badge">Synthetische Demodaten</span>}
-      {!demo && <button className="secondary" onClick={logout}>Abmelden</button>}</div></header>
+      <ThemeToggle />{!demo && <button className="secondary" onClick={logout}>Abmelden</button>}</div></header>
     <nav aria-label="Hauptnavigation"><div>{pages.map(([id, title]) => <button key={id} aria-current={page === id ? 'page' : undefined}
       onClick={() => update({ page: id, detail: null, detailEnd: null })}>{title}</button>)}</div></nav>
     <main>
@@ -119,6 +120,7 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
           {!detailEnd && (kind !== 'all' && kind !== 'custom' || day) ? <>
             <button className="secondary" aria-label="Vorheriger Zeitraum" onClick={() => shift(-1)}>←</button>
             {!day && ['week', 'month', 'quarter', 'season', 'year'].includes(kind) ? <PeriodFields kind={kind} anchor={anchor}
+              firstYear={plant.data.firstDay ? Number(plant.data.firstDay.slice(0, 4)) : undefined}
               change={value => update({ anchor: value })} /> : <label>Stichtag<input type="date" value={day || anchor} onChange={e => e.target.value && update(day ?
                 { detail: e.target.value } : { anchor: e.target.value })} /></label>}
             <button className="secondary" aria-label="Nächster Zeitraum" onClick={() => shift(1)}>→</button>
@@ -131,11 +133,12 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
         </div>}
         {runningImport && status.data?.progress && <Status text={`Datenimport · ${status.data.progress.percent} % verarbeitet`} />}
         {page === 'overview' && <><Overview query={query} drill={drill} day={day} evidence={!!detailEnd} simulation={simulation}
-          version={version} liveVersion={liveVersion} /></>}
+          version={version} liveVersion={liveVersion} openSettings={() => update({ page: 'settings' })} /></>}
         {page === 'potential' && <><h1>Speicher & Potenzial</h1>
-          <p>Wähle oben den Zeitraum. Zuerst steht eine Abschätzung für zusätzliche Speicherkapazität aus den Tageswerten.
+          <p className="lede">Oben steht der Zustand des vorhandenen Speichers über alle Jahre. Darunter folgt für den gewählten Zeitraum eine Abschätzung für zusätzliche Speicherkapazität aus den Tageswerten.
             Darunter folgen die Auswertung der Einspeisung für eine zusätzliche Last (etwa ein Elektroauto) und die
             detaillierte Intervallsimulation, sofern die Messdaten dafür ausreichen.</p>
+          <BatteryHealth />
           <StoragePotential query={query} />
           <Surplus query={query} zone={zone} drill={drill} />
           <details className="panel"><summary>Detaillierte Intervallsimulation (Speicher, Lastverschiebung, Zusatzbedarf)</summary>
@@ -270,6 +273,21 @@ function Surplus({ query, zone, drill }: { query: string; zone: string; drill: (
       </> : <Status error={events?.error} />}
     </Panel>
   </>
+}
+
+/** Light, dark or system palette; the choice is a per-browser convenience. */
+function ThemeToggle() {
+  const read = () => { try { return localStorage.getItem('theme') ?? '' } catch { return '' } }
+  const [theme, setTheme] = useState(read)
+  useEffect(() => {
+    if (theme) document.documentElement.dataset.theme = theme
+    else delete document.documentElement.dataset.theme
+    try { if (theme) localStorage.setItem('theme', theme); else localStorage.removeItem('theme') } catch { /* storage blocked */ }
+  }, [theme])
+  const next = theme === '' ? 'dark' : theme === 'dark' ? 'light' : ''
+  const label = theme === 'dark' ? 'Dunkel' : theme === 'light' ? 'Hell' : 'System'
+  return <button className="theme" title="Farbschema wechseln" aria-label={'Farbschema: ' + label + '. Wechseln'}
+    onClick={() => { setTheme(next); setTimeout(() => location.reload(), 0) }}>◐ {label}</button>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)
