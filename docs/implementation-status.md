@@ -428,7 +428,7 @@ Am 14. November 2026 folgte eine Prüfung der neuen Auswertungen und der Datenqu
 
 **Lesende Proben über die private Instanz.** Es wurde nichts gespeichert.
 - Die Tagesroute (`/provider/probe`) lieferte für den 10.09.2023 und den 15.07.2024 PV, Last, Bezug und Einspeisung. Für die Batteriepunkte 83322 und 83323 kam kein Wert. Ein erneuter API-Tagesimport ergänzt deshalb keine Batteriewerte.
-- Die Gerätehistorie (`/provider/probe/device-minutes`, Gerät `5205263_14_1_1`) lieferte für den 01.06.2023 und den 15.07.2024 alle Gesamtzähler, auch Batterieladung (13034) und -entladung (13035), dazu Momentanleistungen und SOC als Anteil 0–1. Der SOC-Punkt 13141 hat keine Einheit und erscheint in der Diagnose deshalb als `unknown-unit`. Die Werte (0,789 bzw. 1) sind plausibel.
+- Die Gerätehistorie (`/provider/probe/device-minutes`, Gerät `<Geräte-Key>`) lieferte für den 01.06.2023 und den 15.07.2024 alle Gesamtzähler, auch Batterieladung (13034) und -entladung (13035), dazu Momentanleistungen und SOC als Anteil 0–1. Der SOC-Punkt 13141 hat keine Einheit und erscheint in der Diagnose deshalb als `unknown-unit`. Die Werte (0,789 bzw. 1) sind plausibel.
 - Der bestehende Gerätezähler-Nachimport schreibt historische Tage nicht, weil er Sungrow-Tageswerte für alle sechs Kanäle voraussetzt. Ein eigener Tageszähler-Auftrag ist als DATA-06 beschrieben.
 - Die Anlagen-Monats- und -Jahresberichte (CSV) haben keine Batteriespalten. Der Gesamtbericht enthält Jahressummen, deren Bilanz exakt schließt.
 - In der Datenbank stimmt die Netto-Batterieenergie aus der Bilanz (PV + Bezug − Last − Einspeisung) an allen Tagen mit Batteriewerten mit der gemessenen Differenz Ladung − Entladung überein. Für historische Tage ist sie damit bekannt, die Bruttowerte fehlen.
