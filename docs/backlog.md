@@ -234,3 +234,11 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 **Status:** Offen.
 
 **Abnahme.** Für einen gewählten Monat werden 15-Minuten-Werte aller Kanäle und der Ladezustand aus der Gerätehistorie nachgeladen. Es werden nur fehlende Werte ergänzt, mit Vorschau und Freigabe. Damit werden Tagesprofile nach Uhrzeit (Sommer und Winter), Ladegrenzen und eine Kapazitätsschätzung je Jahr möglich.
+
+## OPS-01 · Private Instanz dauerhaft in der Cloud betreiben
+
+**Status:** In Arbeit. Planung, Konfiguration und lokale Prüfung sind fertig. Offen sind Accounts, VM, Migration und Cutover, jeweils nach Freigabe. [Nachweis OPS-01](implementation-status.md#ops-01--cloud-betrieb), [Plan](cloud-deployment.md), [Einrichtung](cloud-setup.md).
+
+Die private Instanz läuft auf Oracle Cloud Always Free (A1, nur Always-Free-Kontingent) im Docker-Stack mit PostgreSQL, erreichbar nur über Tailscale.
+
+**Abnahme.** Alle Punkte der Validierung (Phase 7 in `cloud-deployment.md`) sind erfüllt. Der Abgleich mit `deploy/cloud/verify.sql` stimmt zwischen alter und neuer Datenbank überein. Ein verschlüsseltes externes Backup liegt außerhalb von Oracle, und eine Wiederherstellungsprobe ist bestanden.

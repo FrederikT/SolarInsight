@@ -503,3 +503,21 @@ TypeScript, ESLint, Vite und der .NET-Release-Publish liefen durch. Ein Playwrig
 Das Demo-Image wurde mit Docker Compose neu gebaut und der App-Container auf Port 8080 ersetzt. Die private Instanz auf Port 8081 wurde mit dem neuen Release-Publish über ihren bestehenden Startweg neu gestartet. Datenbank und Konfiguration wurden weiterverwendet. Beide Instanzen meldeten HTTP 200 auf `/health/ready`. Der private Server lieferte die Startseite aus dem neuen Build.
 
 Mit UX-06, UX-07 und LIVE-01 bestanden TypeScript, ESLint, Vite, 25 Unit-Tests, 36 Integrations- und Vertragstests, 11 Linux-Playwright-Tests und der PostgreSQL-Restore. Beide lokalen Instanzen wurden aus diesem Quellstand erneut bereitgestellt.
+
+## OPS-01 · Cloud-Betrieb
+
+Stand 2026-11-15 auf `feat/cloud-oracle`:
+
+- Neu: Produktions-Overlay `deploy/cloud/compose.cloud.yaml` mit internem DB-Netz, festen IPs, Tailscale `serve`, Healthcheck, `read_only`, `cap_drop`, Limits und Log-Rotation. Dazu Skripte für Abgleich (`verify.sql`), verschlüsseltes Backup (`backup.sh` mit age, systemd-Timer) und Wiederherstellungsprobe (`restore-check.sh`).
+- Sicherheitskorrekturen:
+  - `data` in `.dockerignore`;
+  - OpenAPI nur im Demo- und Development-Modus;
+  - ungültige `Solar:TrustedProxy` bricht den Start ab.
+- Prüfungen:
+  - Unit-Tests und Docker-Build;
+  - lokaler Stack mit Dummy-Secrets: HTTPS-Zwang, Proxy-Vertrauen, Netztrennung, Read-only-Dateisystem, OpenAPI 404, Startabbruch bei ungültiger Proxy-IP, Restore-Check;
+  - `verify.sql` lesend gegen die private DB.
+  Einzelheiten stehen im Übergabeprotokoll von [cloud-deployment.md](cloud-deployment.md#übergabeprotokoll).
+- ARM64-Build unter QEMU ist erfolgreich.
+- Nicht geprüft: Tailscale `serve` (noch kein Account), `backup.sh` als Ganzes (braucht Linux mit age), Lauf auf echter ARM-Hardware.
+- Lokale Bereitstellung auf 8080/8081 **nicht** aktualisiert: Die Änderungen liegen nur auf dem Feature-Branch, und laufende Dienste werden ohne Freigabe nicht gestoppt.

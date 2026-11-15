@@ -2,6 +2,7 @@
 .local
 .env
 secrets
+data
 backups
 **/node_modules
 **/dist

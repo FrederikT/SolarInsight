@@ -1,0 +1,96 @@
+# Production overlay for the private instance on a single VM (Oracle A1, linux/arm64).
+# Use together with compose.yaml, compose.owner.yaml and compose.sungrow.yaml, see docs/cloud-deployment.md.
+# Access only via Tailscale (no inbound ports); the app port stays on 127.0.0.1 for SSH diagnostics.
+name: solar
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    restart: unless-stopped
+    environment:
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    networks: [backend]
+    shm_size: 256m
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 200
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  app:
+    image: solar-insight:${SOLAR_IMAGE_TAG:-local}
+    restart: unless-stopped
+    environment:
+      Solar__Demo: "false"
+      Solar__AllowHttp: "false"
+      Solar__TrustedProxy: 172.30.0.10
+      Sungrow__MappingFile: /run/secrets/sungrow_mapping
+    secrets:
+      - sungrow_mapping
+    networks:
+      backend: {}
+      edge:
+        ipv4_address: 172.30.0.20
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+    healthcheck:
+      # The aspnet image has bash but neither curl nor wget.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '\"ready\"' <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
+  tailscale:
+    image: tailscale/tailscale:v1.104.7
+    hostname: ${TS_HOSTNAME:-solar}
+    restart: unless-stopped
+    env_file:
+      # Contains only TS_AUTHKEY=<one-time key>. Remove the line after the first successful join.
+      - ${TS_ENV_FILE:-./secrets/tailscale.env}
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_AUTH_ONCE: "true"
+    volumes:
+      - tailscale:/var/lib/tailscale
+      - ./deploy/cloud/tailscale-serve.json:/config/serve.json:ro
+    networks:
+      edge:
+        ipv4_address: 172.30.0.10
+    depends_on:
+      app:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 128
+    logging: *logging
+
+networks:
+  backend:
+    internal: true
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+secrets:
+  sungrow_mapping:
+    file: ${SUNGROW_MAPPING_SECRET:-./secrets/sungrow-mapping.json}
+
+volumes:
+  tailscale:
