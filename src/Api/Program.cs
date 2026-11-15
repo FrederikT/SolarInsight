@@ -91,7 +91,8 @@ builder.Services.AddRateLimiter(o =>
     void Policy(string name, int count, TimeSpan window) => o.AddPolicy(name, c =>
         RateLimitPartition.GetFixedWindowLimiter(c.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new() { PermitLimit = count, Window = window }));
-    Policy("api", 240, TimeSpan.FromMinutes(1));
+    // One dashboard view issues about ten requests; 600 per minute still bounds a misbehaving client.
+    Policy("api", 600, TimeSpan.FromMinutes(1));
     Policy("login", 8, TimeSpan.FromMinutes(5));
     Policy("simulate", 12, TimeSpan.FromMinutes(1));
 });
