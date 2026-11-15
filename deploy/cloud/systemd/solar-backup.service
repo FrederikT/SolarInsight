@@ -1,0 +1,10 @@
+[Unit]
+Description=Solar Insight encrypted backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=solar
+EnvironmentFile=-/opt/solar/backup/backup.env
+ExecStart=/opt/solar/app/deploy/cloud/backup.sh

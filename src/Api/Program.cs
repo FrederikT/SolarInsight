@@ -75,7 +75,10 @@ builder.Services.AddAntiforgery(o =>
     o.Cookie.SameSite = SameSiteMode.Strict;
     o.Cookie.SecurePolicy = runtime.AllowHttp ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
 });
-if (IPAddress.TryParse(config["Solar:TrustedProxy"], out var proxy))
+IPAddress? proxy = null;
+if (config["Solar:TrustedProxy"] is { Length: > 0 } trustedProxy && !IPAddress.TryParse(trustedProxy, out proxy))
+    throw new InvalidOperationException("Solar:TrustedProxy muss eine einzelne IP-Adresse sein.");
+if (proxy is not null)
 {
     builder.Services.Configure<ForwardedHeadersOptions>(o =>
     {
@@ -154,7 +157,8 @@ app.UseRateLimiter();
 app.MapGet("/health/live", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/health/ready", async (Store db, CancellationToken ct) =>
     await db.Database.CanConnectAsync(ct) ? Results.Ok(new { status = "ready" }) : Results.StatusCode(503));
-app.MapOpenApi();
+// The API description lists every endpoint; only expose it where no private data is served.
+if (runtime.Demo || app.Environment.IsDevelopment()) app.MapOpenApi();
 var auth = app.MapGroup("/api/v1/auth").RequireRateLimiting("api");
 auth.MapGet("/session", (HttpContext ctx, IAntiforgery csrf) =>
     new { demo = runtime.Demo, authenticated = ctx.User.Identity?.IsAuthenticated ?? false,
