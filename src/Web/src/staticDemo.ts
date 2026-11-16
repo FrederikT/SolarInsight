@@ -1066,23 +1066,23 @@ export async function handleStaticDemoRequest<T>(path: string, method = 'GET', b
     } as T
   }
   if (route === '/live/now') {
-    const { byDay } = getDataset()
-    const rows = byDay.get(DEFAULT_ANCHOR) ?? []
-    const now = new Date()
-    const slot = Math.min(rows.length - 1, Math.floor(((now.getHours() * 60 + now.getMinutes()) / 5)))
-    const r = rows[Math.max(0, slot)]
-    const at = new Date(Math.floor(now.getTime() / 300_000) * 300_000).toISOString()
-    const pvKw = r.pv / r.hours, loadKw = r.load / r.hours
-    const gridKw = (r.import - r.export) / r.hours
-    const batKw = (r.charge - r.discharge) / r.hours
-    const mk = (val: number, dir: string) => ({ value: val, direction: dir, measuredAt: at, ageSeconds: 25, quality: 'confirmed' })
+    // Use a sunny midday snapshot so the public demo always shows active solar production, battery charging and export
+    // regardless of what time of day a visitor opens the page, with slight variation per 30-second refresh tick.
+    const tick = Math.floor(Date.now() / 30_000) % 4
+    const pvKw = [4.85, 5.12, 4.96, 5.28][tick]
+    const loadKw = [0.68, 0.74, 0.62, 0.71][tick]
+    const batKw = [2.45, 2.60, 2.50, 2.65][tick] // charging
+    const gridKw = -(pvKw - loadKw - batKw)       // negative = grid export
+    const soc = [0.68, 0.69, 0.70, 0.71][tick]
+    const at = new Date(Math.floor(Date.now() / 300_000) * 300_000).toISOString()
+    const mk = (val: number, dir: string) => ({ value: Math.round(val * 1000) / 1000, direction: dir, measuredAt: at, ageSeconds: 20, quality: 'confirmed' })
     return {
-      pv: mk(pvKw, pvKw > 0.01 ? 'production' : 'idle'),
+      pv: mk(pvKw, 'production'),
       load: mk(loadKw, 'consumption'),
-      grid: mk(gridKw, gridKw > 0.01 ? 'import' : gridKw < -0.01 ? 'export' : 'idle'),
-      battery: mk(batKw, batKw > 0.01 ? 'charge' : batKw < -0.01 ? 'discharge' : 'idle'),
-      soc: mk(r.soc, 'state'),
-      pvSurplusKw: gridKw < -0.01 ? -gridKw : 0,
+      grid: mk(gridKw, 'export'),
+      battery: mk(batKw, 'charge'),
+      soc: mk(soc, 'state'),
+      pvSurplusKw: Math.round(-gridKw * 1000) / 1000,
       flowConfirmed: true, quality: 'synthetic', fetchedAt: at,
     } as T
   }

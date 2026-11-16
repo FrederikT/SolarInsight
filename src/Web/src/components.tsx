@@ -12,7 +12,7 @@ echarts.use([BarChart, LineChart, HeatmapChart, PieChart, ScatterChart, SankeyCh
 export const colors = ['#b67715', '#165eaa', '#a8324e', '#008269', '#6d4dac', '#397577', '#5c7065']
 export const number = (value: number | null | undefined, digits = 2) =>
   value == null ? '—' : value.toLocaleString('de-DE', { maximumFractionDigits: digits })
-export const power = (kw: number) => Math.abs(kw) < 10 ? number(kw * 1000, 3) + ' W' : number(kw, 3) + ' kW'
+export const power = (kw: number) => Math.abs(kw) < 10 ? number(kw * 1000, 0) + ' W' : number(kw, 2) + ' kW'
 export const pct = (value: number | null | undefined) => value == null ? '—' : number(value * 100, 1) + ' %'
 export const date = (iso: string) => new Date(iso.slice(0, 10) + 'T12:00:00Z').toLocaleDateString('de-DE', { timeZone: 'UTC' })
 export const localDay = (iso: string, zone: string) => new Intl.DateTimeFormat('sv-SE', { timeZone: zone }).format(new Date(iso))
