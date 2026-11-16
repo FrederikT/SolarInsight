@@ -562,3 +562,5 @@ Stand 2026-11-16 (Branch `feat/github-pages-demo`):
   - TypeScript (`tsc --noEmit`), ESLint, regulärer Vite-Build (`npm run build`) und statischer Pages-Build (`VITE_STATIC_DEMO=true npm run build:pages`) fehlerfrei.
   - Playwright-Smoke-Test gegen den gebauten statischen Pages-Ordner unter `/SolarInsight/`: Übersicht, Energiefluss, Speicher & Potenzial, interaktive Szenario-Simulation, Datenstatus und Live-Probe bestanden mit `0` ausgehenden `/api/`-Netzwerkaufrufen.
   - Vollständige E2E- und Restore-Suite (`.local/backlog-browser.ps1`) gegen den regulären .NET-/PostgreSQL-Build: 13/13 Playwright-Tests bestanden.
+- **PWA-Installation (Android & Windows Desktop):**
+  - `src/Web/public/manifest.json` (`display: standalone`, `theme_color: #012c23`, `icon-192.png`, `icon-512.png` und `icon-512-maskable.png` für Android Adaptive Icons) sowie `src/Web/public/sw.js` (schlanker Service Worker, der ausschließlich statische Shell-Assets zwischenspeichert und `/api/` sowie `/health/` strikt vom Caching ausnimmt) ergänzt und in `index.html` bzw. `main.tsx` registriert.
