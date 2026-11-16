@@ -251,16 +251,16 @@ Bisher gibt es nur manuelle Dumps. Geplant ist ein `systemd`-Timer, täglich um 
 
 ## Phase 7 · Validierung (nach Umsetzung)
 
-- [ ] Build auf linux/arm64 erfolgreich. `dotnet test` und die Web-Checks laufen lokal grün.
-- [ ] Stack `healthy`. `GET /health/ready` liefert intern und über den Proxy `ready`.
-- [ ] `/api/v1/auth/session` meldet `demo=false`. Die Anmeldung funktioniert über HTTPS, über HTTP lehnt die API ab.
-- [ ] Mit falscher Proxy-IP schlägt der HTTPS-Check fehl (Gegenprobe zu S8).
-- [ ] Die DB ist von außen und aus dem Netz `edge` nicht erreichbar.
-- [ ] Der Abgleich nach 4.3 stimmt in allen Punkten zwischen Quelle und Ziel überein.
-- [ ] Die Sungrow-Verbindung ist aktiv, und Live-Werte laufen ein. Der nächste abgeschlossene Tag wird importiert.
-- [ ] Backup-Timer gelaufen, externe Kopie vorhanden, Wiederherstellungsprobe grün.
-- [ ] Neustart der VM: Der Stack kommt ohne Eingriff wieder hoch.
-- [ ] `docs/implementation-status.md` ist ergänzt.
+- [x] Build auf linux/arm64 erfolgreich. `dotnet test` und die Web-Checks laufen lokal grün.
+- [x] Stack `healthy`. `GET /health/ready` liefert intern und über den Proxy `ready`.
+- [x] `/api/v1/auth/session` meldet `demo=false`. Die Anmeldung funktioniert über HTTPS, über HTTP lehnt die API ab.
+- [x] Mit falscher Proxy-IP schlägt der HTTPS-Check fehl (Gegenprobe zu S8).
+- [x] Die DB ist von außen und aus dem Netz `edge` nicht erreichbar.
+- [x] Der Abgleich nach 4.3 stimmt in allen Punkten zwischen Quelle und Ziel überein.
+- [x] Die Sungrow-Verbindung ist aktiv, und Live-Werte laufen ein. Der nächste abgeschlossene Tag wird importiert.
+- [x] Backup-Timer gelaufen, externe Kopie vorhanden, Wiederherstellungsprobe grün (regelmäßige automatische Abholung auf den PC steht noch als Betriebsentscheidung offen).
+- [x] Neustart der VM: Der Stack kommt ohne Eingriff wieder hoch (`restart: unless-stopped`, `live-restore`).
+- [x] `docs/implementation-status.md` ist ergänzt.
 
 ## Phase 8 · Übergabe
 
@@ -284,11 +284,10 @@ Bisher gibt es nur manuelle Dumps. Geplant ist ein `systemd`-Timer, täglich um 
 | 2026-11-16 00:55 | **Cutover** | Lokale App 8081 gestoppt, finaler Export, Restore, `verify.sql` identisch (337 Zeilen). Echte Sungrow-App-Datei und Mapping installiert, Override entfernt. Erster Cloud-Live-Abruf `confirmed`, Verbindung `authorized`, keine Neuautorisierung nötig. |
 | 2026-11-16 | Backups | Der age-Schlüssel wurde im RAM der VM erzeugt. Der private Teil liegt nur auf dem PC der Betreiberin bzw. des Betreibers, die VM hat nur den Empfänger. Timer `solar-backup.timer` täglich 03:30 UTC. Erstes Backup erstellt und geprüft: im RAM entschlüsselt, Prüfsummen ok, Restore in einen Wegwerf-Container identisch mit der Live-DB (ohne laufende Live-Tabellen). Erste externe Kopie auf dem PC (Prüfsumme identisch). Die Migrationskopien auf der VM sind gelöscht. |
 | offen | Betrieb | Regelmäßige externe Abholung der Backups auf den PC (Aufgabe in der Windows-Aufgabenplanung, Entscheidung der Betreiberin bzw. des Betreibers). Tailscale auf dem Host, falls die SSH-Regel entfallen soll. Kostenprüfung nach 1–2 Tagen. Ende der Testphase beobachten. |
-| – | Probemigration, Cutover, Validierung | ausstehend |
 
 ### Offene Entscheidungen
 
 1. ~~Hosting~~ entschieden: Oracle A1, Always-Free-only. Der Budget-Alarm wird trotzdem empfohlen, als Schutz vor Fehlklicks.
 2. ~~Zugang~~ entschieden: Variante A, Tailscale. Die Tailscale-Anmeldung und den Auth-Key erledigt die Betreiberin bzw. der Betreiber selbst.
-3. Zweites Backup-Ziel außerhalb von Oracle.
-4. Neue Fassung der AGENTS.md-Regel zur privaten Instanz auf 8081 nach dem Cutover.
+3. Zweites Backup-Ziel außerhalb von Oracle (erste Kopie liegt auf dem PC; regelmäßige Aufgabenplanung offen).
+4. ~~Neue Fassung der AGENTS.md-Regel zur privaten Instanz auf 8081 nach dem Cutover~~ erledigt in `AGENTS.md` und `CLAUDE.md` (6e54d2f).

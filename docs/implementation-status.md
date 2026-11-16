@@ -7,7 +7,7 @@
 | Kernumfang | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | A01–A24 umgesetzt und geprüft. A24 mit Testdaten. Die Sungrow-Abnahme A25 ist offen. Die Einzelprüfungen stehen unten. |
 | Kalender, Energieflüsse und Speicher | [Bugs und Feature-Anforderungen](../SolarInsight_Bugs_und_Features.md) | BUG-01–04 und FEATURE-01–05 umgesetzt. Der Abgleich der Messpunkte an einer echten Anlage bleibt Teil von A25. |
 | Import, Live-Daten und Heimnetz | [Sungrow-Import](import-todos.md) | Erledigte Anforderungen und die offene Anlagenprüfung stehen in der Checkliste. |
-| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-07 umgesetzt und geprüft. CI-01 ist auf GitHub bestätigt. DATA-01 und DATA-02 sind teilgeprüft. KPI-01, FLOW-01, BAT-01, UX-09, UX-10, POT-02 und DATA-05 sind umgesetzt und mit privaten Daten geprüft. DATA-06 (historische Batteriewerte aus Gerätezählern) ist umgesetzt und auf der privaten Datenbank ausgeführt, UX-11, COST-01, BAT-02 und DATA-07 sind umgesetzt, DATA-08 ist offen, siehe [Datenverfügbarkeit](data-availability.md). |
+| Bedienung, Setup und automatische Importe | [Backlog](backlog.md) | UX-01 bis UX-10, CI-01, LIVE-01, LIVE-02, POT-01, POT-02, KPI-01, FLOW-01, BAT-01, BAT-02, DATA-03 bis DATA-07 umgesetzt und geprüft. UX-11 (einschließlich Kopfzeilen-Logo und Tab-Icon) und COST-01 sind umgesetzt und mit der Demo geprüft (für COST-01 fehlen auf der privaten Anlage die Betreibertarife). DATA-01 und DATA-02 sind teilgeprüft. OPS-01 ist in der Cloud in Betrieb. DATA-08 ist offen, siehe [Datenverfügbarkeit](data-availability.md). |
 | Repository-Lizenz | [Solar Insight Spezifikation](../SolarInsight_Spezifikation.md) | [MIT-Lizenz](../LICENSE) mit Copyright-Vermerk für Frederik Thuss. |
 
 ## Umsetzungsliste
@@ -532,3 +532,19 @@ Stand 2026-11-16 (`main` 78351a2):
   - erster Sungrow-Live-Abruf in der Cloud `confirmed`;
   - Backup entschlüsselt und wiederhergestellt.
 - Einzelheiten stehen im [Übergabeprotokoll](cloud-deployment.md#übergabeprotokoll).
+
+## UX-11 · Logo in der Kopfzeile und Tab-Icon
+
+Stand 2026-11-16:
+
+- **Änderungen:**
+  - Aus `src/Img/SolarInsight_Logo_Horizontal_Transparent.png` wurde der innere Logobereich auf `src/Web/public/solar-insight-logo.png` (568 × 96 px) zugeschnitten und in `src/Web/src/main.tsx` als Markenbild der Kopfzeile (`.brand img`, 44 px Höhe auf Desktop, 34 px auf Mobilgeräten) eingebunden. Die Hintergrundfarbe von `header` in `src/Web/src/style.css` entspricht exakt dem dunklen Grünton des Logos (`#012c23`), sodass kein Rahmen sichtbar ist.
+  - Aus `src/Img/Mint Solar Field Badge.png` wurden die Tab- und App-Icons `favicon.ico` (32 × 32 px), `favicon-32.png` (32 × 32 px), `apple-touch-icon.png` (180 × 180 px) und `icon-192.png` (192 × 192 px) unter `src/Web/public/` erzeugt und in `src/Web/index.html` samt `<meta name="theme-color" content="#012c23">` verlinkt.
+  - In `docs/backlog.md`, `docs/implementation-status.md`, `docs/import-todos.md` und `docs/cloud-deployment.md` wurden widersprüchliche Statusangaben und offene Checklistenpunkte mit den dokumentierten Prüfnachweisen abgeglichen.
+- **Prüfungen:**
+  - TypeScript (`tsc --noEmit`), ESLint und Vite-Produktionsbuild ohne Fehler; alle Icon- und Logodateien liegen im gebauten `dist/`-Verzeichnis.
+  - .NET-Release-Build und Tests: 47/47 Unit-Tests und 42/42 PostgreSQL-Integrationstests bestanden.
+  - Vollständige Browser- und Restore-Suite (`.local/backlog-browser.ps1` gegen isolierte Demo- und Privat-Instanzen auf Port 8180/8181 mit PostgreSQL): 13/13 Playwright-Tests (inkl. 375-px-Layoutprüfung auf allen Hauptansichten) sowie Demo-Neustart und `pg_dump`/`pg_restore`-Prüfung bestanden.
+- **Lokale Bereitstellung:**
+  - Die frühere private Instanz auf Port 8081 wurde gemäß Betriebsregel nach dem Cloud-Cutover (OPS-01) nicht gestartet.
+  - Das Docker-Image `solarinsight-app:latest` für die lokale Demo auf Port 8080 wurde mit `.local/ci-deploy-demo.cmd` aus dem aktuellen Quellstand erfolgreich neu gebaut und die Container `solarinsight-db-1` und `solarinsight-app-1` wurden gestartet (`Healthy`). Anschließend beendete sich jedoch die Linux-Engine von Docker Desktop (`open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`), sodass `http://127.0.0.1:8080/health/ready` nach dem Engine-Stopp nicht mehr erreichbar war und im aktuellen Sitzungskontext ohne erhöhten Dienststart nicht erneut geprüft werden konnte.

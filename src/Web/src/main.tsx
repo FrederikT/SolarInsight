@@ -105,7 +105,7 @@ function Dashboard({ demo, refreshSession }: { demo: boolean; refreshSession: ()
   const zone = plant?.data?.zone || 'Europe/Berlin'
   const logout = async () => { await request('/auth/logout', 'POST'); await refreshSession() }
   return <>
-    <header><div className="header-inner"><a className="brand" href="/" aria-label="Solar Insight Startseite"><span aria-hidden>☀</span> Solar Insight</a>
+    <header><div className="header-inner"><a className="brand" href="/" aria-label="Solar Insight Startseite"><img src="/solar-insight-logo.png" alt="Solar Insight" width="568" height="96" /></a>
       <span className="plant">{plant?.data?.name ?? 'PV-Analyse'}</span>{demo && <span className="badge">Synthetische Demodaten</span>}
       <ThemeToggle />{!demo && <button className="secondary" onClick={logout}>Abmelden</button>}</div></header>
     <nav aria-label="Hauptnavigation"><div>{pages.map(([id, title]) => <button key={id} aria-current={page === id ? 'page' : undefined}

@@ -140,7 +140,7 @@ Die bestehende Live-Diagnose liest nur die aktive Zuordnung. Die historische Pro
 
 ## KPI-01 · Autarkie und Eigenverbrauch auch bei unvollständigen Zeiträumen
 
-**Status:** Umgesetzt und mit Unit-, Integrations- und Browsertests (Demo und Fixture) geprüft. Prüfung mit privaten Daten im Browser ausstehend (Anmeldung). [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+**Status:** Erledigt. Mit Unit-, Integrations- und Browsertests (Demo und Fixture) sowie mit privaten Daten im Browser geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
 
 Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle vier Energiewerte vorlagen.
 
@@ -148,7 +148,7 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 
 ## FLOW-01 · Energieflüsse, Stromherkunft und Beobachtungen aus Tageswerten
 
-**Status:** Umgesetzt und geprüft wie KPI-01. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+**Status:** Erledigt und geprüft wie KPI-01. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
 
 „Woher kam mein Haushaltsstrom?“, „Wohin ging mein PV-Ertrag?“, die Ladegrenzen, „Wann brauche ich Netzstrom?“ und die Beobachtungen blieben leer, auch bei 100 % Tagesabdeckung.
 
@@ -156,25 +156,25 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 
 ## BAT-01 · Ladezustand und Batteriewerte in Tages-, Monats- und Langzeitansichten
 
-**Status:** Umgesetzt und mit Demo und Tests geprüft. Prüfung mit privaten Daten ausstehend. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+**Status:** Erledigt. Mit Demo, Tests und privaten Daten geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
 
 **Abnahme.** Historische SOC-Stichproben erscheinen im Tagesverlauf und in der Monats-, Quartals- und Jahresansicht (Mittel, Minimum, Maximum, eigene Prozentachse). Batterieladung und -entladung erscheinen in Langzeitdiagrammen. Ohne Speicherparameter werden Ladegrenzen und Kapazität aus den Messwerten geschätzt und als Schätzung gekennzeichnet.
 
 ## UX-09 · Zeitraumauswahl Jahr und „Seit Datenbeginn“
 
-**Status:** Umgesetzt und im Browser (Demo) geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+**Status:** Erledigt. Im Browser (Demo und private Daten) geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
 
 **Abnahme.** Die Jahresauswahl zeigt nur das Jahr und keinen Stichtag. „Seit Datenbeginn“ funktioniert auch über mehr als 732 Tage. Lange Zeiträume werden serverseitig zu Monaten zusammengefasst.
 
 ## UX-10 · Verlaufsdiagramme für Quartale, Jahreszeiten und Jahre
 
-**Status:** Umgesetzt und im Browser (Demo) geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+**Status:** Erledigt. Im Browser (Demo und private Daten) geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
 
 **Abnahme.** Der Verlauf bietet eine gestapelte Energiebilanz mit Einspeisung unter der Nulllinie, einzelne Messgrößen als Linien mit ein- und ausblendbaren Reihen, Quoten und Speicher. Die Auflösung (Tage, Wochen, Monate) wird automatisch gewählt und lässt sich ändern. Ab etwa einem Jahr erscheinen ein Monatsvergleich je Jahr und Tagesmittel je Jahreszeit. Achsen und Einheiten sind beschriftet.
 
 ## POT-02 · „Speicher & Potenzial“ verständlich überarbeiten
 
-**Status:** Umgesetzt und mit Demo und Tests geprüft. Prüfung mit privaten Daten ausstehend. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
+**Status:** Erledigt. Mit Demo, Tests und privaten Daten geprüft. [Nachweis](implementation-status.md#kpi-01-flow-01-bat-01-ux-09-ux-10-pot-02-und-data-05--übernahme-und-auswertungen).
 
 **Abnahme.** Eingaben sind beschriftet und erklärt, Preise kommen aus den Tarifen oder sind als Standardannahme gekennzeichnet. Die Seite vergleicht die heutige Situation mit mehreren Zusatzkapazitäten (Netzbezug, Einspeisung, Autarkie, Eigenverbrauch, Ersparnis, Amortisation, Vollzyklen) und zeigt den Monatsverlauf. Rechenweg und Grenzen (obere Abschätzung aus Tagesbilanzen) sind sichtbar. Die bestehende Intervallsimulation bleibt erreichbar.
 
@@ -199,7 +199,7 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 
 ## UX-11 · Oberfläche modernisieren, Energiefluss und Kalender
 
-**Status:** Umgesetzt und mit der Demo geprüft. Die Prüfung mit privaten Daten im Browser steht aus. [Nachweis](implementation-status.md#ux-11-cost-01-bat-02-und-data-07--oberfläche-kosten-und-speicherzustand).
+**Status:** Umgesetzt und mit der Demo geprüft. Kopfzeilen-Logo und Tab-Icon sind ergänzt. Die Prüfung mit privaten Daten im Browser steht aus. [Nachweis](implementation-status.md#ux-11-cost-01-bat-02-und-data-07--oberfläche-kosten-und-speicherzustand) · [Logo und Tab-Icon](implementation-status.md#ux-11--logo-in-der-kopfzeile-und-tab-icon).
 
 **Abnahme.**
 - Kennzahlen stehen als Kacheln mit Symbol, Farbe je Größe, Vorjahresvergleich und Erklärung auf Abruf.
@@ -210,22 +210,23 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 - Ein Kalender zeigt je Tag Autarkie, PV-Ertrag, Netzbezug oder Speicherentladung. Tage ohne Werte sind leer, Ausfall- und Nachholtage markiert, ein Klick öffnet den Tag.
 - Der Monatsvergleich zeigt das letzte Jahr als Balken neben dem Vorjahr.
 - Alle Ansichten passen bei 375 Pixel Breite.
+- Kopfzeile und Browser-Tab verwenden das Solar-Insight-Logo bzw. das runde Badge-Icon.
 
 ## COST-01 · Stromkosten und Ersparnis
 
-**Status:** Umgesetzt und mit der Demo geprüft. Für die private Anlage fehlen die Tarife des Betreibers.
+**Status:** Umgesetzt und mit der Demo und Unit-Tests geprüft. Für die private Anlage fehlen die Tarife des Betreibers. [Nachweis](implementation-status.md#ux-11-cost-01-bat-02-und-data-07--oberfläche-kosten-und-speicherzustand).
 
 **Abnahme.** Mit hinterlegten Tarifen zeigt die Kostenansicht je Monat Netzbezug, Grundpreis und Einspeiseerlös, die Nettokosten und die kumulierte Ersparnis. Die Ersparnis vergleicht mit denselben Preisen den Fall ohne Anlage (gesamter Verbrauch aus dem Netz) und ohne Speicher (Entladung als Bezug, Ladung als Einspeisung). Tage ohne gültigen Bezugspreis werden ausgewiesen und nicht bepreist. Ohne Tarife führt die Ansicht zur Tariferfassung.
 
 ## BAT-02 · Speicherzustand über die Jahre
 
-**Status:** Umgesetzt und mit der Demo geprüft.
+**Status:** Erledigt. Mit Demo und Unit-Tests geprüft. [Nachweis](implementation-status.md#ux-11-cost-01-bat-02-und-data-07--oberfläche-kosten-und-speicherzustand).
 
 **Abnahme.** Für alle Tage mit Batteriewerten zeigt die Seite „Speicher & Potenzial“ je Jahr Ladung, Entladung, Wirkungsgrad, Vollzyklen, Tage mit voller Ladung und den Anteil am Hausverbrauch. Je Monat stehen die mittlere Entladung pro Tag im Jahresvergleich und der Wirkungsgrad. Feststellungen werden in Sätzen formuliert. Ausfall- und Nachholtage sind ausgeschlossen. Eine Kapazitätsabnahme wird nicht behauptet, solange nur Tageswerte vorliegen.
 
 ## DATA-07 · Ausfall- und Nachholtage kennzeichnen
 
-**Status:** Umgesetzt.
+**Status:** Erledigt. Mit Demo und Unit-Tests geprüft. [Nachweis](implementation-status.md#ux-11-cost-01-bat-02-und-data-07--oberfläche-kosten-und-speicherzustand).
 
 **Abnahme.** Ein Tag mit 0 kWh Hausverbrauch gilt als Ausfalltag, der Folgetag als Nachholtag. Beide zählen nicht für Höchstwerte und nicht für den Speicherzustand und sind im Kalender markiert. Die Summen über mehrere Tage bleiben unverändert.
 
