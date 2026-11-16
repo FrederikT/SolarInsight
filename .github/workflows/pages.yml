@@ -1,0 +1,50 @@
+name: Deploy static demo to GitHub Pages
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: src/Web/package-lock.json
+      - name: Typecheck, lint, unit tests and build static demo
+        working-directory: src/Web
+        env:
+          VITE_STATIC_DEMO: 'true'
+        run: |
+          npm ci
+          npm run typecheck
+          npm run lint
+          npm run build:pages
+          cp dist/index.html dist/404.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: src/Web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

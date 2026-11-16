@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { base, request, useData, type Battery, type Job, type Period, type Potential, type Settings } from './api'
+import { base, downloadStaticExport, isStaticDemo, request, useData, type Battery, type Job, type Period, type Potential, type Settings } from './api'
 import { BatteryFields, bounds, Chart, chartOptions, date, Numeric, number, Panel, pct, Status } from './components'
 
 const baseBattery: Battery = { capacity: 14, chargeKw: 4, dischargeKw: 4, chargeEfficiency: .94,
@@ -138,7 +138,8 @@ function Results({ result: r, id, drill }: { result: Potential; id: string; dril
   const additional = r.additional
   return <div className="result">
     <h3>Simulationsergebnis</h3>
-    <a className="button secondary" href={base + '/exports/simulations/' + id}>JSON exportieren</a>
+    <a className="button secondary" href={base + '/exports/simulations/' + id}
+      onClick={isStaticDemo ? e => { e.preventDefault(); void downloadStaticExport('simulation', id, 'solar-insight-simulation.json', 'application/json') } : undefined}>JSON exportieren</a>
     <p>{r.validation.sufficient ? 'Referenz ausreichend angenähert' : 'Explorative Auswertung'} · Abdeckung {pct(r.coverage)} · normierter Fehler {pct(r.validation.normalizedError)} · SOC-MAE {number(r.validation.socMaePoints)} Prozentpunkte</p>
     <p>Referenzabweichung Modell minus Messung · Bezug {number(r.validation.importError)} kWh · Export {number(r.validation.exportError)} kWh.</p>
     <div className="table"><table><thead><tr>{['Kennzahl', 'Gemessen', 'Modellreferenz', 'Szenario', 'Delta', 'Änderung'].map(x => <th key={x}>{x}</th>)}</tr></thead><tbody>

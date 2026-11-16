@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react'
 
 export const base = '/api/v1'
+export const isStaticDemo = import.meta.env.VITE_STATIC_DEMO === 'true'
 let csrf = ''
 export async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  if (import.meta.env.VITE_STATIC_DEMO === 'true') {
+    const mod = await import('./staticDemo')
+    return mod.handleStaticDemoRequest<T>(path, method, body)
+  }
   const response = await fetch(base + path, {
     method,
     headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), 'X-CSRF': csrf },
@@ -67,4 +72,14 @@ export type Rule = { kw: number; socTolerance: number; minutes: number; highLoad
 export type Config = { since: string; pvKwp: number; origin: string; battery: Battery | null }
 export type Settings = { name: string; zone: string; region: string; rule: Rule | null; configurations: Config[] }
 export type Tariff = { id: string; kind: number; start: string; end: string | null; price: number }
+
+export async function downloadStaticExport(kind: 'overview' | 'simulation', arg: string, filename: string, mime: string) {
+  if (import.meta.env.VITE_STATIC_DEMO !== 'true') return
+  const mod = await import('./staticDemo')
+  const content = kind === 'overview' ? mod.buildCsvExport(arg) : mod.getSimulationExport(arg)
+  const url = URL.createObjectURL(new Blob([content], { type: mime }))
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove()
+  URL.revokeObjectURL(url)
+}
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { EnergyInsights } from './EnergyInsights'
-import { base, useData, type EnergyEvent, type Job, type Point, type Report } from './api'
+import { base, downloadStaticExport, isStaticDemo, useData, type EnergyEvent, type Job, type Point, type Report } from './api'
 import { bounds, change, Chart, chartOptions, date, eventBounds, localDay, number, Panel, pct, power, stamp, Status, Tile, tones } from './components'
 import { Costs, YearCalendar } from './Visuals'
 import { TodayTimeline } from './LiveView'
@@ -126,7 +126,8 @@ export function Overview({ query, drill, day, evidence, simulation, version, liv
   const heatHours = [...new Set(heatPoints.map(heatHour))].sort()
   return <>
     <div className="section-heading"><div><span className="eyebrow">ENERGIEBILANZ</span><h1>{day ? 'Tagesdetail' : evidence ? 'Ereigniszeitraum' : 'Übersicht'}</h1>
-      <p>{bounds(report.period)} · {report.timeZone}</p></div><a className="button secondary" href={base + '/exports/overview?' + query}>CSV exportieren</a></div>
+      <p>{bounds(report.period)} · {report.timeZone}</p></div><a className="button secondary" href={base + '/exports/overview?' + query}
+        onClick={isStaticDemo ? e => { e.preventDefault(); void downloadStaticExport('overview', query, 'solar-insight-auswertung.csv', 'text/csv;charset=utf-8') } : undefined}>CSV exportieren</a></div>
     {runningDay && !dailyMetrics && <p className="notice">Der Tag läuft noch. Der Verlauf zeigt bereits gespeicherte Leistungsmessungen.
       Tagesenergie und Quoten benötigen Energieintervalle oder Sungrow-Tageswerte. Für Nettokosten sind zusätzlich Tarife erforderlich.</p>}
     <details className="data-notes"><summary><span aria-hidden="true">ⓘ </span>Hinweise zur Datengrundlage</summary>

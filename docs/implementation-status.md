@@ -548,3 +548,17 @@ Stand 2026-11-16:
 - **Lokale Bereitstellung:**
   - Die frühere private Instanz auf Port 8081 wurde gemäß Betriebsregel nach dem Cloud-Cutover (OPS-01) nicht gestartet.
   - Das Docker-Image `solarinsight-app:latest` für die lokale Demo auf Port 8080 wurde mit `.local/ci-deploy-demo.cmd` aus dem aktuellen Quellstand erfolgreich neu gebaut und die Container `solarinsight-db-1` und `solarinsight-app-1` wurden gestartet (`Healthy`). Anschließend beendete sich jedoch die Linux-Engine von Docker Desktop (`open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`), sodass `http://127.0.0.1:8080/health/ready` nach dem Engine-Stopp nicht mehr erreichbar war und im aktuellen Sitzungskontext ohne erhöhten Dienststart nicht erneut geprüft werden konnte.
+
+## Statische GitHub-Pages-Demo und öffentliche Dokumentation
+
+Stand 2026-11-16 (Branch `feat/github-pages-demo`):
+
+- **Änderungen:**
+  - `src/Web/src/staticDemo.ts`: Reiner Client-Demo-Adapter für statisches Hosting (GitHub Pages), der exakt denselben synthetischen Datengenerator (PRNG-Seed `17293`, 210.240 Fünf-Minuten-Intervalle von `2024-11-01` bis `2026-11-01`, 9,6-kWh-Batterie und Beispieltarife) wie `SolarInsight.Application.Demo` im Browser ausführt und alle Lese-, Simulations-, Probe- und Export-Endpunkte ohne Backend-Server bedient.
+  - `src/Web/src/api.ts`, `Overview.tsx`, `Scenario.tsx`, `main.tsx`: Optionale Build-Weiche `import.meta.env.VITE_STATIC_DEMO === 'true'` und Base-URL-Unterstützung (`import.meta.env.BASE_URL`). Im regulären Build (`npm run build` / `Dockerfile`) ist `VITE_STATIC_DEMO` nicht gesetzt; Vite entfernt `staticDemo.ts` vollständig per Tree-Shaking (617 statt 618 Module), sodass der private Betrieb und das Docker-Image unverändert bleiben.
+  - `.github/workflows/pages.yml` und `npm run build:pages`: GitHub-Actions-Workflow für den automatischen Build (`--base=/SolarInsight/`) und das Deployment auf GitHub Pages mit minimalen Berechtigungen (`contents: read`, `pages: write`, `id-token: write`).
+  - `README.md`: Vollständige Einrichtungs- und Self-Hosting-Anleitung für Nutzer mit eigener Sungrow-/iSolarCloud-Anlage sowie Hinweise zu optionalem Heimnetz-/Cloud-Betrieb und GitHub Pages.
+- **Prüfungen:**
+  - TypeScript (`tsc --noEmit`), ESLint, regulärer Vite-Build (`npm run build`) und statischer Pages-Build (`VITE_STATIC_DEMO=true npm run build:pages`) fehlerfrei.
+  - Playwright-Smoke-Test gegen den gebauten statischen Pages-Ordner unter `/SolarInsight/`: Übersicht, Energiefluss, Speicher & Potenzial, interaktive Szenario-Simulation, Datenstatus und Live-Probe bestanden mit `0` ausgehenden `/api/`-Netzwerkaufrufen.
+  - Vollständige E2E- und Restore-Suite (`.local/backlog-browser.ps1`) gegen den regulären .NET-/PostgreSQL-Build: 13/13 Playwright-Tests bestanden.

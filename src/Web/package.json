@@ -1,6 +1,6 @@
 {
   "name":"solar-insight-web","private":true,"version":"1.0.0","type":"module",
-  "scripts":{"typecheck":"tsc --noEmit","lint":"eslint .","build":"tsc --noEmit && vite build","test:e2e":"playwright test"},
+  "scripts":{"typecheck":"tsc --noEmit","lint":"eslint .","build":"tsc --noEmit && vite build","build:pages":"tsc --noEmit && vite build --base=/SolarInsight/","test:e2e":"playwright test"},
   "dependencies":{"echarts":"6.1.0","react":"19.3.1","react-dom":"19.3.1"},
   "devDependencies":{"@playwright/test":"1.58.2","@types/react":"19.2.2","@types/react-dom":"19.2.2","eslint":"10.14.0","typescript":"5.9.3","typescript-eslint":"8.72.1","vite":"8.3.6"}
 }
