@@ -26,7 +26,7 @@ $env:DOTNET_CLI_HOME = "$PWD\.local"; $env:NUGET_PACKAGES = "$PWD\.local\nuget"
 cd src/Web; ..\..\.local\node-v24.15.0-win-x64\npm.cmd run typecheck; ...\npm.cmd run lint; ...\npm.cmd run build
 ```
 
-Bereitstellung: Demo auf Port 8080 über Docker Compose (`.local/ci-deploy-demo.cmd`), private Instanz auf Port 8081 über `.local/ci-deploy-private.ps1` bzw. `.local/owner-instance/start.ps1` (portables PostgreSQL auf 127.0.0.1:55433). Readiness: `GET /health/ready`.
+Bereitstellung: Demo auf Port 8080 über Docker Compose (`.local/ci-deploy-demo.cmd`), die private Instanz läuft in der Cloud (Oracle-VM, Docker Compose, Zugang nur über Tailscale; siehe `docs/cloud-deployment.md`). Die frühere lokale private Instanz auf 8081 bleibt gestoppt. Ihr portables PostgreSQL auf 127.0.0.1:55433 dient nur noch als Rückfallebene. Readiness: `GET /health/ready`.
 
 ## Vorsicht
 
