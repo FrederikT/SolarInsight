@@ -237,7 +237,7 @@ Im laufenden Monat und in mehreren Quartalen fehlten beide Quoten, obwohl alle v
 
 ## OPS-01 · Private Instanz dauerhaft in der Cloud betreiben
 
-**Status:** In Arbeit. Planung, Konfiguration und lokale Prüfung sind fertig. Offen sind Accounts, VM, Migration und Cutover, jeweils nach Freigabe. [Nachweis OPS-01](implementation-status.md#ops-01--cloud-betrieb), [Plan](cloud-deployment.md), [Einrichtung](cloud-setup.md).
+**Status:** In Betrieb seit 2026-11-16. Die Validierung ist bis auf die regelmäßige externe Backup-Abholung und die Kostenbestätigung nach einigen Tagen erfüllt. [Nachweis OPS-01](implementation-status.md#ops-01--cloud-betrieb), [Plan](cloud-deployment.md), [Einrichtung](cloud-setup.md).
 
 Die private Instanz läuft auf Oracle Cloud Always Free (A1, nur Always-Free-Kontingent) im Docker-Stack mit PostgreSQL, erreichbar nur über Tailscale.
 

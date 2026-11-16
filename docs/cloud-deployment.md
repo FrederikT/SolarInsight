@@ -1,6 +1,6 @@
 # Cloud-Betrieb der privaten Instanz
 
-Stand: 2026-11-15. Status: **Planung abgeschlossen (Phasen 1–3, Plan für 4–8). Hosting freigegeben: Oracle Always Free (Always-Free-only) mit Tailscale-Zugang. Umsetzung auf `feat/cloud-oracle` ausstehend.** Es wurden keine Cloud-Ressourcen erstellt, nichts gepusht und nicht in die private Datenbank geschrieben.
+Stand: 2026-11-16. Status: **In Betrieb.** Die private Instanz läuft auf einer Oracle-Always-Free-VM (A1, 2 OCPU/12 GB, Frankfurt) und ist nur über Tailscale erreichbar (`https://solar.<tailnet>.ts.net`). Der Cutover ist am 2026-11-16 um 00:55 erfolgt. Die lokale Instanz auf 8081 ist gestoppt, ihre Datenbank bleibt als Rückfallebene unverändert. Instanzspezifische Werte wie IP, Tailnet-Name und Schlüsselpfade stehen nur lokal in `.local/cloud-instance.md`, nicht im Repository.
 
 Dieses Dokument enthält keine Secrets. Es wird bei jedem Schritt fortgeschrieben, damit ein neuer Agent übernehmen kann. Den Fortschritt hält das [Übergabeprotokoll](#übergabeprotokoll) am Ende fest.
 
@@ -222,7 +222,7 @@ Zusätzlich auf dem Branch:
 
 1. `backup.sh` ausführen, siehe unten.
 2. Optional vor größeren Updates ein Boot-Volume-Backup in OCI (5 frei).
-3. `git fetch` und dann `git checkout <freigegebener Commit>` auf der VM. Auf der VM wird nie selbst entwickelt.
+3. Die VM hat keinen GitHub-Zugang. Vom PC aus `git bundle create solar-main.bundle main` ausführen, das Bundle per `scp` nach `/tmp/` kopieren und auf der VM als `solar` Folgendes ausführen: `git -C /opt/solar/app fetch /tmp/solar-main.bundle main:refs/remotes/bundle/main && git -C /opt/solar/app merge --ff-only bundle/main && chmod -R go+rX /opt/solar/app`. Auf der VM wird nie selbst entwickelt.
 4. Das Image mit dem Commit-Hash taggen (`SOLAR_IMAGE_TAG`). Das vorige Image bleibt erhalten.
 5. `docker compose ... up -d --build --wait`. Danach Readiness, Anmeldung, Datenstatus und eine historische Kennzahl prüfen.
 
@@ -276,7 +276,14 @@ Bisher gibt es nur manuelle Dumps. Geplant ist ein `systemd`-Timer, täglich um 
 | 2026-11-15 | ARM64-Build (`docker buildx --platform linux/arm64`, QEMU) | erfolgreich. Das Image startet als `aarch64` und enthält `Api.dll` und `wwwroot`. Unit-Tests im Worktree 47/47. |
 | 2026-11-15 | Git-Integration | Vor dem Push geprüft: keine Secrets. Eine echte Sungrow-Gerätekennung in `implementation-status.md` wurde durch einen Platzhalter ersetzt (d42715f, ohne History-Umschreibung, Altstand bleibt für die spätere History-Bereinigung). [PR #3](https://github.com/FrederikT/SolarInsight/pull/3) war CI-grün und wurde nach `main` gemergt (fcfce07). Danach wurde `main` in `feat/cloud-oracle` gemergt. Erneut geprüft: Build 0 Fehler/0 Warnungen, Unit 47/47, Integration 42/42, Web typecheck/lint/build grün, Cloud-Stack-Checks alle wie erwartet. |
 | 2026-11-15 | Nicht lokal prüfbar | Tailscale `serve` (Weiterleitung, `X-Forwarded-Proto`, Zertifikat) braucht einen Account. `backup.sh` als Ganzes braucht Linux mit `age`. Prüfung in Phase 7. |
-| – | VM anlegen (Betreiberin bzw. Betreiber in der Oracle-Konsole, siehe [cloud-setup.md](cloud-setup.md)) | ausstehend |
+| 2026-11-16 | VM | Die Betreiberin bzw. der Betreiber hat sie angelegt: Ubuntu 24.04 aarch64, A1.Flex 2 OCPU/12 GB, AD-1, VCN aus dem Assistenten „VCN with Internet Connectivity“, öffentliche IPv4. Die SSH-Regel ist auf die Heim-IP beschränkt. Kosten laut „Free Tier“ 0. Die Kostenschätzung des Formulars (1,85 € pro Monat für das Boot-Volume) ist ein Listenpreis ohne Always-Free-Abzug. |
+| 2026-11-16 | Host | Updates, unattended-upgrades (Reboot 04:30 UTC), SSH nur per Schlüssel, Docker 29.9.3 und Compose v5.7.1 (Log-Rotation, live-restore), Benutzer `solar`, `/opt/solar/{app,secrets,backups,backup}`. Code per `git bundle`. Secrets auf der VM neu erzeugt. |
+| 2026-11-16 | Stack mit leerer DB | db und app healthy. Auf der VM geprüft: HTTPS-Zwang, Proxy-Vertrauen, OpenAPI 404, DB ohne Edge- und Internetzugang, App erreicht Sungrow, Read-only-Dateisystem, Collation C, iptables lässt nur 22 durch. |
+| 2026-11-16 | Tailscale | Beitritt per Login-Link, Ablauf der Anmeldung abgeschaltet, MagicDNS und HTTPS-Zertifikate aktiv. Vom PC aus: gültiges Zertifikat, `/api/v1/auth/session` → 200 (`X-Forwarded-Proto` von `tailscale serve` wird akzeptiert). **Fehler behoben:** Ein Klon mit `umask 077` machte `tailscale-serve.json` unlesbar für den Container ohne Capabilities (Neustart-Schleife). Abhilfe: `chmod -R go+rX /opt/solar/app`, siehe Updates. Der Host selbst ist nicht im Tailnet, SSH läuft deshalb weiter über die öffentliche IP, beschränkt auf die Heim-IP. |
+| 2026-11-16 00:50 | Probemigration ohne Sungrow | Rein lesender Export. Die leere DB (nur Standardanlage) verworfen, `pg_restore --no-owner --role=solar`, `owner.hash` nach `/state`, Keys nach `/keys`. `verify.sql` identisch (337 Zeilen). Sungrow in der Cloud vorübergehend per Override abgeschaltet (Token-Konflikt vermeiden). Login mit dem bisherigen Passwort bestätigt. |
+| 2026-11-16 00:55 | **Cutover** | Lokale App 8081 gestoppt, finaler Export, Restore, `verify.sql` identisch (337 Zeilen). Echte Sungrow-App-Datei und Mapping installiert, Override entfernt. Erster Cloud-Live-Abruf `confirmed`, Verbindung `authorized`, keine Neuautorisierung nötig. |
+| 2026-11-16 | Backups | Der age-Schlüssel wurde im RAM der VM erzeugt. Der private Teil liegt nur auf dem PC der Betreiberin bzw. des Betreibers, die VM hat nur den Empfänger. Timer `solar-backup.timer` täglich 03:30 UTC. Erstes Backup erstellt und geprüft: im RAM entschlüsselt, Prüfsummen ok, Restore in einen Wegwerf-Container identisch mit der Live-DB (ohne laufende Live-Tabellen). Erste externe Kopie auf dem PC (Prüfsumme identisch). Die Migrationskopien auf der VM sind gelöscht. |
+| offen | Betrieb | Regelmäßige externe Abholung der Backups auf den PC (Aufgabe in der Windows-Aufgabenplanung, Entscheidung der Betreiberin bzw. des Betreibers). Tailscale auf dem Host, falls die SSH-Regel entfallen soll. Kostenprüfung nach 1–2 Tagen. Ende der Testphase beobachten. |
 | – | Probemigration, Cutover, Validierung | ausstehend |
 
 ### Offene Entscheidungen

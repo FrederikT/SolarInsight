@@ -521,3 +521,14 @@ Stand 2026-11-15 auf `feat/cloud-oracle`:
 - ARM64-Build unter QEMU ist erfolgreich.
 - Nicht geprüft: Tailscale `serve` (noch kein Account), `backup.sh` als Ganzes (braucht Linux mit age), Lauf auf echter ARM-Hardware.
 - Lokale Bereitstellung auf 8080/8081 **nicht** aktualisiert: Die Änderungen liegen nur auf dem Feature-Branch, und laufende Dienste werden ohne Freigabe nicht gestoppt.
+
+Stand 2026-11-16 (`main` 78351a2):
+
+- Demo 8080 und lokale private Instanz 8081 neu gebaut. Vorher die private DB gesichert (`before-main-78351a2-*.dump`), es gab keine neue Migration. Beide meldeten `ready`.
+- Danach Oracle-VM eingerichtet, Daten migriert und Cutover um 00:55. Die private Instanz läuft seitdem in der Cloud, 8081 ist gestoppt.
+- Geprüft:
+  - `verify.sql` zwischen Quelle und Ziel identisch;
+  - Login mit dem bisherigen Passwort;
+  - erster Sungrow-Live-Abruf in der Cloud `confirmed`;
+  - Backup entschlüsselt und wiederhergestellt.
+- Einzelheiten stehen im [Übergabeprotokoll](cloud-deployment.md#übergabeprotokoll).
