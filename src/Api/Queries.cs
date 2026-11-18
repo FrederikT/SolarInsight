@@ -181,11 +181,14 @@ public sealed class Queries(Store db, RuntimeOptions options)
         var socSamples = await db.LiveMeasurements.AsNoTracking().Where(m => m.PlantId == plant.Id &&
             m.Source == DeviceCounterHistory.SocSource && m.MeasuredAt >= start && m.MeasuredAt <= end)
             .OrderBy(m => m.MeasuredAt).Select(m => new SocSample(m.MeasuredAt, m.Value)).ToArrayAsync(ct);
+        var liveMoments = plant.Synthetic ? [] : await db.LiveMeasurements.AsNoTracking().Where(m =>
+            m.PlantId == plant.Id && m.Source == LiveNormalization.Source && m.Quality == "confirmed" &&
+            m.MeasuredAt >= start && m.MeasuredAt < end).OrderBy(m => m.MeasuredAt).ToArrayAsync(ct);
         var connection = plant.ProviderId is null ? null : await db.Connections.AsNoTracking()
             .SingleOrDefaultAsync(c => c.PlantId == plant.Id, ct);
         bool knownPaths = plant.Synthetic || (connection is not null &&
             JsonSerializer.Deserialize<SungrowMapping>(connection.Capabilities)?.ConfirmedAcPaths == true);
-        var intervals = WithSoc(rows.Select(r => r.Value()).ToArray(), socSamples);
+        var intervals = WithLive(WithSoc(rows.Select(r => r.Value()).ToArray(), socSamples), liveMoments, start, end);
         var result = new DataView(plant, zone, period, intervals, new(prices.Select(p => p.Value())),
             config is null ? null : JsonSerializer.Deserialize<Battery>(config.Parameters), knownPaths,
             configurations.Any(c => c.Since > period.Start), plant.Revision.ToString(CultureInfo.InvariantCulture), aggregates)
@@ -210,6 +213,74 @@ public sealed class Queries(Store db, RuntimeOptions options)
         return rows.Select(r => r.Soc is not null ? r :
             byTime.TryGetValue(r.End.UtcTicks, out var end) ? r with { Soc = end } :
             byTime.TryGetValue(r.Start.UtcTicks, out var begin) ? r with { Soc = begin } : r).ToArray();
+    }
+
+    /// <summary>
+    /// Fills missing 15-minute intervals and missing channels on partial intervals from confirmed live measurements
+    /// until historical counter intervals are imported. Imported interval values always take precedence.
+    /// </summary>
+    public static Interval[] WithLive(Interval[] rows, LiveMeasurement[] samples, DateTimeOffset start, DateTimeOffset end)
+    {
+        if (samples.Length == 0) return rows;
+        var step = TimeSpan.FromMinutes(15);
+        decimal hours = (decimal)step.TotalHours;
+        var byBucket = samples.Where(s => s.MeasuredAt >= start && s.MeasuredAt < end)
+            .GroupBy(s => new DateTimeOffset(start.UtcTicks + (s.MeasuredAt.UtcTicks - start.UtcTicks) / step.Ticks * step.Ticks, TimeSpan.Zero))
+            .ToDictionary(g => g.Key, g => g.ToArray());
+        if (byBucket.Count == 0) return rows;
+
+        static decimal? Mean(LiveMeasurement[] bucket, string channel, Func<decimal, decimal>? project = null)
+        {
+            var values = bucket.Where(m => m.Channel == channel).Select(m => project is null ? m.Value : project(m.Value)).ToArray();
+            return values.Length == 0 ? null : values.Average();
+        }
+
+        static Interval FromLive(DateTimeOffset bucketStart, TimeSpan step, decimal hours, LiveMeasurement[] bucket)
+        {
+            var pvKw = Mean(bucket, "pv") ?? Mean(bucket, "pvDc");
+            var loadKw = Mean(bucket, "load");
+            var importKw = Mean(bucket, "grid", v => v > 0 ? v : 0m);
+            var exportKw = Mean(bucket, "grid", v => v < 0 ? -v : 0m);
+            var chargeKw = Mean(bucket, "battery", v => v > 0 ? v : 0m);
+            var dischargeKw = Mean(bucket, "battery", v => v < 0 ? -v : 0m);
+            var soc = bucket.Where(m => m.Channel == "soc").OrderBy(m => m.MeasuredAt).Select(m => (decimal?)m.Value).LastOrDefault();
+            return new Interval(bucketStart, bucketStart + step,
+                pvKw * hours, loadKw * hours, importKw * hours, exportKw * hours,
+                chargeKw * hours, dischargeKw * hours, soc, null, "trapezoid", LiveNormalization.Source);
+        }
+
+        var existingByStart = rows.Where(r => r.End - r.Start == step).ToDictionary(r => r.Start);
+        var result = new List<Interval>(rows.Length + byBucket.Count);
+        foreach (var row in rows)
+        {
+            if (row.End - row.Start == step && byBucket.TryGetValue(row.Start, out var bucket))
+            {
+                var live = FromLive(row.Start, step, hours, bucket);
+                result.Add(row with
+                {
+                    Pv = row.Pv ?? live.Pv,
+                    Load = row.Load ?? live.Load,
+                    Import = row.Import ?? live.Import,
+                    Export = row.Export ?? live.Export,
+                    Charge = row.Charge ?? live.Charge,
+                    Discharge = row.Discharge ?? live.Discharge,
+                    Soc = row.Soc ?? live.Soc
+                });
+            }
+            else result.Add(row);
+        }
+        foreach (var (bucketStart, bucket) in byBucket)
+        {
+            if (!existingByStart.ContainsKey(bucketStart) &&
+                !rows.Any(r => r.Start < bucketStart + step && r.End > bucketStart))
+            {
+                var live = FromLive(bucketStart, step, hours, bucket);
+                if (live.Pv is not null || live.Load is not null || live.Import is not null ||
+                    live.Export is not null || live.Charge is not null || live.Discharge is not null || live.Soc is not null)
+                    result.Add(live);
+            }
+        }
+        return result.OrderBy(r => r.Start).ToArray();
     }
 
     public static object[] Buckets(DataView view, bool providerDaily = false)

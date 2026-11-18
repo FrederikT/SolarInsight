@@ -564,3 +564,29 @@ Stand 2026-11-16 (Branch `feat/github-pages-demo`):
   - Vollständige E2E- und Restore-Suite (`.local/backlog-browser.ps1`) gegen den regulären .NET-/PostgreSQL-Build: 13/13 Playwright-Tests bestanden.
 - **PWA-Installation (Android & Windows Desktop):**
   - `src/Web/public/manifest.json` (`display: standalone`, `theme_color: #012c23`, `icon-192.png`, `icon-512.png` und `icon-512-maskable.png` für Android Adaptive Icons) sowie `src/Web/public/sw.js` (schlanker Service Worker, der ausschließlich statische Shell-Assets zwischenspeichert und `/api/` sowie `/health/` strikt vom Caching ausnimmt) ergänzt und in `index.html` bzw. `main.tsx` registriert.
+
+## DATA-01 und LIVE-02 · Tagesabschluss in den frühen Morgenstunden und Live-Fallback
+
+Stand 2026-11-18:
+
+- **Ursachenbefund (lesende Prüfung der Cloud-Datenbank für den 13.–17.11.2026):**
+  - Am 15.11. (`3,4 kWh` PV) und 16.11. (`1,3 kWh` PV) lagen echte, witterungsbedingt niedrige Sungrow-Tageswerte (`sungrow-day-2`) in `Aggregates` vor.
+  - Für den 11.11. sowie den 13.–17.11. fehlten jedoch die 15-Minuten-Gerätezählerintervalle (`sungrow-device-counters-v1`) in `Readings`: Weil `AutomaticCounterHistory` direkt nach Mitternacht (`00:01–00:09` Uhr Ortszeit) lief, waren die Sungrow-Tageswerte (`daily`) um `00:09` Uhr noch leer (`[]`). Dadurch verwarf `SaveDay` mangels `limits` alle sechs Energiekanäle, speicherte nur die 96 historischen SOC-Stichproben (`sungrow-device-history-soc-v1`) und schaltete `CounterDay` mit `Advance` auf den Folgetag weiter.
+  - Zusätzlich verkürzte `limit = day.AddDays(1) == today ? end - step : end` das Abfrageende des Vortags auf `23:45` Uhr (95 statt 96 Viertelstunden), `HistoryWorker` verschob `scan.Due` pauschal um `SUNGROW_REFRESH_MINUTES = 720` (12 Stunden bis `13:24` Uhr), und `Queries.Read` bezog für vergangene Tage keine vorhandenen 5-Minuten-`LiveMeasurements` (`sungrow-device-moment-v1`) ein, solange die historischen Intervalle noch fehlten.
+- **Änderungen:**
+  - `src/Api/AutomaticCounterHistory.cs`:
+    - Alle 96 Viertelstundenfenster (`00:00` bis `24:00` Uhr bzw. `end`) abfragen.
+    - Wenn für einen frisch abgeschlossenen Tag (`day >= today.AddDays(-2)`) noch nicht alle konfigurierten Sungrow-Tageswerte (`mapping.Daily.Fields`) vorliegen, wird der Tag **nicht** mit `Advance` abgeschlossen und `CounterData` bleibt erhalten; der Job prüft stündlich (`now.AddHours(1)`) in den frühen Morgenstunden erneut, bis Sungrow die Tageswerte liefert.
+    - Profil-Upgrade (`Version = 2`) setzt `CounterDay` einmalig auf `today.AddDays(-7)` zurück, damit die vom Mitternachts-Bug betroffenen Tage (11.11.–17.11.) automatisch nachgezogen werden.
+  - `src/Api/HistoryWorker.cs` und `src/Infrastructure/HistoryReconciliation.cs`:
+    - `scan.Due` für abgeschlossene Tage auf spätestens `02:00` Uhr Ortszeit begrenzen; `Kind == "daily"` vor Minuten-Lücken priorisieren und bei noch ausstehenden Tageswerten stündlich statt nach 24 Stunden wiederholen.
+    - Bereits gespeicherte `sungrow-device-counters-v1`-Intervalle in `HistoryReconciliation.Merge` vor dem Überschreiben durch einspaltige `sungrow-minutes-v1`-Intervalle schützen.
+  - `src/Api/Queries.cs` (`Queries.WithLive`):
+    - Fehlende 15-Minuten-Intervalle und fehlende Kanäle auf Teilintervallen dynamisch aus bestätigten 5-Minuten-`LiveMeasurements` (`sungrow-device-moment-v1`) auffüllen, ohne `LiveMeasurements` oder `Readings` zu löschen. Sobald importierte Zählerintervalle (`Readings`) vorliegen, haben diese Vorrang; `LiveMeasurements` füllt verbleibende Lücken.
+- **Prüfungen:**
+  - 47/47 Unit-Tests und 43/43 PostgreSQL-Integrationstests (inkl. neuem Test `DeviceCounterWaitsForMorningAggregatesCoversLastIntervalAndLiveMeasurementsFillGaps`) bestanden.
+  - Vollständige Browser- und Restore-Suite (`.local/backlog-browser.ps1`): 13/13 Playwright-Tests sowie Demo-Neustart und PostgreSQL-Backup/Restore bestanden.
+- **Lokale Bereitstellung & Cloud-Rollout:**
+  - Die frühere private Instanz auf Port 8081 bleibt gemäß Betriebsregel nach dem Cloud-Cutover (OPS-01) gestoppt.
+  - Der Docker-Compose-Start der lokalen Demo auf Port 8080 (`.local/ci-deploy-demo.cmd`) war weiterhin durch die gestoppte Linux-Engine von Docker Desktop blockiert (`open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`); der Build und die Readiness-Prüfung erfolgten stattdessen über den lokalen Release-Publish (`.local/backlog-publish`) gegen die isolierte Demo- und Privat-Instanz (`http://127.0.0.1:8180/health/ready` → `ready`).
+  - Nach Merge nach `main` auf die Oracle-Cloud-Instanz (`https://solar.warthog-oratrice.ts.net`) ausgerollt, vorab per `backup.sh` gesichert und `/health/ready` sowie den automatischen Nachlauf für den 11.–17.11. verifiziert.
