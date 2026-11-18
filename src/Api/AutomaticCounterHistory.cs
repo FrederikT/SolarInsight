@@ -20,16 +20,18 @@ internal static class AutomaticCounterHistory
             !ProviderEndpoints.SupportsDeviceProbe(live.DeviceKey) || scan.CounterDue > now)
             return false;
         var today = Calendar.Day(now, zone);
-        var day = scan.CounterDay ??= today.AddDays(-30);
-        if (day >= today) return false;
-        var identity = JsonSerializer.Serialize(new { live.DeviceKey, live.Soc, live.SocPercent, mapping.StepMinutes, plant.Zone });
+        var identity = JsonSerializer.Serialize(new { Version = 2, live.DeviceKey, live.Soc, live.SocPercent, mapping.StepMinutes, plant.Zone });
         if (scan.CounterProfile != identity)
         {
+            if (scan.CounterProfile is not null && scan.CounterDay > today.AddDays(-7))
+                scan.CounterDay = today.AddDays(-7);
             scan.CounterUntil = null;
             scan.CounterData = null;
             scan.CounterAttempts = 0;
             scan.CounterProfile = identity;
         }
+        var day = scan.CounterDay ??= today.AddDays(-30);
+        if (day >= today) return false;
         var start = Calendar.Utc(day, zone);
         var end = Calendar.Utc(day.AddDays(1), zone);
         var from = scan.CounterUntil ?? start;
@@ -40,8 +42,7 @@ internal static class AutomaticCounterHistory
         {
             if (from < end)
             {
-                var limit = day.AddDays(1) == today ? end - step : end;
-                var to = WindowEnd(from, limit, step, zone);
+                var to = WindowEnd(from, end, step, zone);
                 if (to > from)
                 {
                     var report = await source.ReadDeviceHistory(plant, live.DeviceKey, ProviderEndpoints.HistoryPoints,
@@ -64,7 +65,16 @@ internal static class AutomaticCounterHistory
                     .DistinctBy(a => a.Point).ToArray();
             }
             var reportForDay = new PointProbeResult("Gerätehistorie", now, collected);
-            await SaveDay(db, plant.Id, live, reportForDay, daily, start, end, step, ct);
+            var intervals = await SaveDay(db, plant.Id, live, reportForDay, daily, start, end, step, ct);
+            bool dailyComplete = mapping.Daily is not { Points.Length: > 0 } requiredDaily ||
+                requiredDaily.Fields.All(field => daily.Any(a => a.Point == field.Name));
+            if (!dailyComplete && day >= today.AddDays(-2) && ++scan.CounterAttempts < 12)
+            {
+                if (!intervals.Any(r => r.End == end))
+                    scan.CounterUntil = end - TimeSpan.FromHours(3);
+                scan.CounterDue = now.AddHours(1);
+                return true;
+            }
             scan.LastSuccess = now;
             Advance(scan, day);
         }
@@ -114,7 +124,7 @@ internal static class AutomaticCounterHistory
             };
         }).ToArray();
 
-    static async Task SaveDay(Store db, Guid plant, LiveMapping live, PointProbeResult report, Aggregate[] daily,
+    static async Task<Interval[]> SaveDay(Store db, Guid plant, LiveMapping live, PointProbeResult report, Aggregate[] daily,
         DateTimeOffset start, DateTimeOffset end, TimeSpan step, CancellationToken ct)
     {
         var (intervals, gaps) = DeviceCounterHistory.Analyze(report, start, end, step);
@@ -143,7 +153,7 @@ internal static class AutomaticCounterHistory
                 DeviceCounterHistory.GapOrigin, DeviceCounterHistory.Source)).ToArray(), ct, origin: DeviceCounterHistory.GapOrigin);
 
         // Only the previously confirmed device, point and fractional scale are eligible.
-        if (live is not { Soc: 13141, SocPercent: false }) return;
+        if (live is not { Soc: 13141, SocPercent: false }) return intervals;
         var soc = report.Points.SingleOrDefault(point => point.Point == live.Soc && string.IsNullOrEmpty(point.Unit));
         var values = soc?.Values.Where(v => v.MeasuredAt >= start && v.MeasuredAt < end && v.Value is >= 0 and <= 1)
             .GroupBy(v => v.MeasuredAt!.Value).Where(group => group.Select(v => v.Value).Distinct().Count() == 1)
@@ -155,5 +165,6 @@ internal static class AutomaticCounterHistory
                     {JsonSerializer.Serialize(values)}::jsonb)
                 ON CONFLICT ("PlantId", "MeasuredAt", "Channel", "Source") DO NOTHING
                 """, ct);
+        return intervals;
     }
 }

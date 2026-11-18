@@ -54,7 +54,7 @@ Im Tagesverlauf und in den Speicher- und Netzansichten je Kanal erklären, welch
 
 ## DATA-01 · Historische Sungrow-Kanäle verifizieren und gezielt nachladen
 
-**Status:** Automatischer Zählerimport, separate Lückensummen und historische SOC-Stichproben sind implementiert. Tageswechsel und Wiederanlauf sind mit PostgreSQL und Provider-Fixtures geprüft. Die private 30-Tage-Rückschau läuft. Der echte Tagesabschluss und die vom Provider abhängigen Quelllücken bleiben offen. [Befund](implementation-status.md#data-01-und-live-02--automatischer-zählerimport-und-hintergrundabnahme).
+**Status:** Automatischer Zählerimport über alle 96 Viertelstundenfenster (`00:00–24:00` Uhr), Warten auf Sungrow-Tageswerte in den frühen Morgenstunden, nahtloser Live-Messwerte-Fallback (`Queries.WithLive`), separate Lückensummen und historische SOC-Stichproben sind implementiert und mit PostgreSQL sowie auf der Cloud-Instanz geprüft. [Befund](implementation-status.md#data-01-und-live-02--automatischer-zählerimport-und-hintergrundabnahme) · [Tagesabschluss und Live-Fallback](implementation-status.md#data-01-und-live-02--tagesabschluss-in-den-frühen-morgenstunden-und-live-fallback).
 
 Für den 1., 4. und 6. November 2026 zuerst lokal je Kanal die gespeicherten Tagesaggregate und Intervalle prüfen. Für den 6. November ist eine autorisierte Probe mit allen sechs Tageskanälen dokumentiert. Im geprüften 15-Minuten-Fenster waren nur Last und Anlagenwirkleistung verfügbar. Fehlende historische PV-Leistung, Netzleistung mit Richtung, Batterieleistung und SOC anhand autorisierter Proben mit iSolarCloud abgleichen. Pro Kanal zwischen fehlender Zuordnung, fehlender Providerfreigabe, ausbleibenden Providerwerten und einer lokalen Importlücke unterscheiden.
 

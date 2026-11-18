@@ -39,20 +39,25 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
             scan = new() { PlantId = plant.Id, NextDay = Calendar.Day(initial.Start, zone), Due = now };
             db.HistoryScans.Add(scan);
         }
+        var morning = Calendar.Utc(today, zone).AddHours(2);
+        if (scan.NextDay < today && now >= morning && scan.Due > now)
+            scan.Due = now;
         if (scan.Due <= now)
         {
             // A long backlog advances in small transactions and survives process restarts.
             for (int count = 0; count < 3 && scan.NextDay < today; count++, scan.NextDay = scan.NextDay.AddDays(1))
                 await QueueDay(db, plant.Id, scan.NextDay, zone, mapping, now, ct);
-            scan.Due = now.AddMinutes(scan.NextDay < today ? 1 : provider.RefreshMinutes);
+            var nextRefresh = now.AddMinutes(provider.RefreshMinutes);
+            var nextMorning = Calendar.Utc(today.AddDays(1), zone).AddHours(2);
+            scan.Due = scan.NextDay < today ? now.AddMinutes(1) : nextRefresh < nextMorning ? nextRefresh : nextMorning;
         }
         bool counterWorked = provider is IDeviceCounterSource counters &&
             await AutomaticCounterHistory.Tick(db, plant, scan, mapping, counters, provider, zone, now, ct);
         var gap = counterWorked ? null : await db.HistoryGaps.Where(g => g.PlantId == plant.Id && g.Due <= now)
-            .OrderBy(g => g.Open).ThenByDescending(g => g.Start).FirstOrDefaultAsync(ct);
+            .OrderBy(g => g.Open).ThenByDescending(g => g.Kind == "daily").ThenByDescending(g => g.Start).FirstOrDefaultAsync(ct);
         if (gap is not null)
         {
-            try { await Repair(db, scan, gap, mapping, ct); }
+            try { await Repair(db, scan, gap, mapping, now, ct); }
             catch (Exception ex) when (ex is ProviderFailure or HttpRequestException or TimeoutException)
             {
                 gap.Error = ex is ProviderFailure failure ? failure.Category : ex is TimeoutException ? "timeout" : "network";
@@ -79,7 +84,7 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
             db.HistoryGaps.Add(new() { PlantId = plant, Start = start, End = end, Kind = "daily", Due = now });
     }
 
-    async Task Repair(Store db, HistoryScan scan, HistoryGap gap, SungrowMapping mapping, CancellationToken ct)
+    async Task Repair(Store db, HistoryScan scan, HistoryGap gap, SungrowMapping mapping, DateTimeOffset now, CancellationToken ct)
     {
         if (gap.Kind == "daily")
         {
@@ -88,7 +93,7 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
             {
                 var incoming = await provider.ReadAggregates(gap.PlantId, gap.Start, gap.End, ct);
                 await Storage.UpsertAggregates(db, gap.PlantId, incoming, ct, fillOnly: true);
-                if (incoming.Length > 0) scan.LastSuccess = DateTimeOffset.UtcNow;
+                if (incoming.Length > 0) scan.LastSuccess = now;
             }
             if (await HistoryReconciliation.DailyCovered(db, gap.PlantId, gap.Start, gap.End, daily, ct))
             {
@@ -105,7 +110,7 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
                 var incoming = await provider.Read(gap.PlantId, from, to, ct);
                 if (incoming.Any(r => r.Start < from || r.End > to)) throw new ProviderFailure("window", false);
                 await Storage.Upsert(db, gap.PlantId, HistoryReconciliation.Merge(rows, incoming, mapping), ct);
-                if (incoming.Length > 0) scan.LastSuccess = DateTimeOffset.UtcNow;
+                if (incoming.Length > 0) scan.LastSuccess = now;
             }
             if (missing.Length == 0 || HistoryReconciliation.Missing(
                 await HistoryReconciliation.Read(db, gap.PlantId, gap.Start, gap.End, ct),
@@ -116,14 +121,14 @@ public sealed class HistoryWorker(IHistorySource provider, IConfiguration config
             }
         }
         gap.Error = "incomplete-history";
-        if (gap.Open) gap.Due = DateTimeOffset.UtcNow.AddDays(1);
-        else Retry(gap, DateTimeOffset.UtcNow, null);
+        if (gap.Open) gap.Due = now.AddDays(1);
+        else Retry(gap, now, null);
     }
 
     void Retry(HistoryGap gap, DateTimeOffset now, TimeSpan? providerDelay)
     {
         gap.Open = ++gap.Attempts >= MaxAttempts;
-        var delay = TimeSpan.FromHours(retryHours);
+        var delay = gap.Kind == "daily" && !gap.Open ? TimeSpan.FromHours(1) : TimeSpan.FromHours(retryHours);
         gap.Due = now + (providerDelay > delay ? providerDelay.Value : delay);
     }
 }

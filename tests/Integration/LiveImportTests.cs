@@ -343,6 +343,92 @@ public class LiveImportTests
     }
 
     [Fact]
+    public async Task DeviceCounterWaitsForMorningAggregatesCoversLastIntervalAndLiveMeasurementsFillGaps()
+    {
+        await using var db = Open();
+        await Importer.Initialize(db, false, default);
+        var today = new DateOnly(2026, 11, 18);
+        var yesterday = today.AddDays(-1);
+        var start = Calendar.Utc(yesterday, Zone);
+        var end = Calendar.Utc(today, Zone);
+        var lastIntervalStart = end.AddMinutes(-15);
+        var plant = new Plant { Id = Guid.NewGuid(), Name = "Morning wait fixture", Zone = Zone.Id };
+        var mapping = new SungrowMapping(null, null, null, null, null, true, true, false, false, false, false,
+            new(13134, null, null, null, null, null), 15,
+            Mapping with { Soc = 13141, SocPercent = false }, DeviceCounters: true);
+        db.Plants.Add(plant);
+        db.Connections.Add(new(plant.Id, "mapped", "", JsonSerializer.Serialize(mapping)));
+        db.Imports.Add(new() { Id = Guid.NewGuid(), PlantId = plant.Id, Start = start, Checkpoint = end,
+            End = end, Status = "completed" });
+        await db.SaveChangesAsync();
+        await LiveStorage.Save(db, plant.Id, ["pvDc", "load", "grid", "battery", "soc"],
+            new(lastIntervalStart.AddMinutes(5), new Dictionary<string, decimal>
+            {
+                ["pvDc"] = .8m, ["load"] = 1.2m, ["grid"] = .4m, ["battery"] = -.2m, ["soc"] = .35m
+            }), lastIntervalStart.AddMinutes(6), TimeSpan.FromMinutes(5), null, null, default);
+
+        // Before historical import runs, Queries.Read fills the 15-minute interval from LiveMeasurements.
+        var beforeImport = await new Queries(db, new(false, "state", true)).Read(plant, new(yesterday, today), default);
+        var liveFallback = Assert.Single(beforeImport.Rows);
+        Assert.Equal((lastIntervalStart, end, .2m, .3m, .1m, 0m, 0m, .05m, .35m),
+            (liveFallback.Start, liveFallback.End, liveFallback.Pv, liveFallback.Load,
+             liveFallback.Import, liveFallback.Export, liveFallback.Charge, liveFallback.Discharge, liveFallback.Soc));
+
+        Aggregate[] publishedDaily = [];
+        var clock = new TestClock(end.AddMinutes(1));
+        var source = new HistoryFixture
+        {
+            DailyAggregates = () => publishedDaily,
+            DevicePoints = at => at == end.AddHours(-3) ?
+            [
+                new(13134, "PV", "Wh", true, 2, "available",
+                    [new(lastIntervalStart, 2000), new(end, 2500)]),
+                new(13003, "DC", "W", true, 2, "available",
+                    [new(lastIntervalStart, 2000), new(end, 2000)]),
+                new(13141, "SOC", "", true, 0, "unknown-unit", [new(lastIntervalStart, .4m)])
+            ] : []
+        };
+        var config = new ConfigurationBuilder().Build();
+        db.HistoryScans.Add(new()
+        {
+            PlantId = plant.Id, NextDay = today, Due = end.AddHours(2),
+            CounterDay = yesterday, CounterDue = clock.Now
+        });
+        await db.SaveChangesAsync();
+
+        // 8 window ticks + 1 finalize tick at 00:09 local time while daily aggregates are still empty:
+        for (int i = 0; i < 9; i++)
+        {
+            await using var stepDb = Open();
+            await new HistoryWorker(source, config, clock).Tick(stepDb, plant, default);
+            clock.Now = clock.Now.AddMinutes(1);
+        }
+        var scanAfterMidnight = await db.HistoryScans.AsNoTracking().SingleAsync(s => s.PlantId == plant.Id);
+        Assert.Equal(yesterday, scanAfterMidnight.CounterDay);
+        Assert.Equal(0, await db.Readings.CountAsync(r => r.PlantId == plant.Id));
+        Assert.Equal(1, await db.LiveMeasurements.CountAsync(m => m.PlantId == plant.Id && m.Source == DeviceCounterHistory.SocSource));
+
+        // At 01:09 local time, Sungrow publishes the daily aggregate; the next tick writes the 23:45-24:00 interval and advances.
+        publishedDaily = [new(plant.Id, "pv", start, end, .5m, 1, "provider", "sungrow-day-2")];
+        clock.Now = clock.Now.AddHours(1);
+        await using (var morningDb = Open())
+            await new HistoryWorker(source, config, clock).Tick(morningDb, plant, default);
+
+        var scanAfterMorning = await db.HistoryScans.AsNoTracking().SingleAsync(s => s.PlantId == plant.Id);
+        Assert.Equal(today, scanAfterMorning.CounterDay);
+        var counterRow = await db.Readings.AsNoTracking().SingleAsync(r => r.PlantId == plant.Id);
+        Assert.Equal((lastIntervalStart, end, .5m, DeviceCounterHistory.Source),
+            (counterRow.Start, counterRow.End, counterRow.Pv, counterRow.SourceRevision));
+
+        // Queries.Read now prefers the imported counter Pv (.5 kWh) while keeping LiveMeasurements for channels not in Readings.
+        await using var verifyDb = Open();
+        var afterImport = await new Queries(verifyDb, new(false, "state", true)).Read(plant, new(yesterday, today), default);
+        var mergedRow = Assert.Single(afterImport.Rows);
+        Assert.Equal(.5m, mergedRow.Pv);
+        Assert.Equal(.3m, mergedRow.Load);
+    }
+
+    [Fact]
     public async Task ActivationUsesServerMappingAndKeepsOneInitialJobAcrossConfirmations()
     {
         await using var db = Open();
@@ -511,6 +597,7 @@ public class LiveImportTests
         public List<DateTimeOffset> Calls { get; } = [];
         public List<DateTimeOffset> DeviceCalls { get; } = [];
         public Func<DateTimeOffset, PointObservation[]>? DevicePoints { get; init; }
+        public Func<Aggregate[]>? DailyAggregates { get; init; }
 
         public Task<PointProbeResult> ReadDeviceHistory(Plant plant, string device, ProbePoint[] points,
             DateTimeOffset start, DateTimeOffset end, int step, CancellationToken ct)
@@ -520,7 +607,7 @@ public class LiveImportTests
         }
 
         public Task<Aggregate[]> ReadAggregates(Guid plant, DateTimeOffset start, DateTimeOffset end, CancellationToken ct) =>
-            Task.FromResult<Aggregate[]>([]);
+            Task.FromResult(DailyAggregates?.Invoke() ?? []);
 
         public async Task<Interval[]> Read(Guid plant, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
         {

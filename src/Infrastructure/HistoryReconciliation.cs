@@ -60,7 +60,8 @@ public static class HistoryReconciliation
             if (old.End != candidate.End) continue;
             if (old.Quality != candidate.Quality || old.SourceRevision != candidate.SourceRevision)
             {
-                if (Covers(candidate, old.End, mapping)) result.Add(candidate);
+                if (old.SourceRevision != DeviceCounterHistory.Source && Covers(candidate, old.End, mapping))
+                    result.Add(candidate);
                 continue;
             }
             bool grid = ValidPair(old.Import, old.Export);
